@@ -247,13 +247,14 @@ class WikiContentLoader:
 
     @staticmethod
     def _render_entry(entry: dict[str, Any]) -> str:
-        title = " / ".join(str(part) for part in entry.get("title_path") or [])
-        return (
-            f"URI: {entry.get('uri', '')}\n"
-            f"Type: {entry.get('kind', '')}\n"
-            f"Title Path: {title}\n"
-            f"Content:\n{entry.get('text', '')}"
-        ).strip()
+        title_parts = [str(part) for part in entry.get("title_path") or []]
+        # The first path component is the resource root and is commonly an
+        # opaque document ID. Keep only meaningful relative headings/names.
+        relative_title = " / ".join(title_parts[1:])
+        content = str(entry.get("text") or "")
+        if not relative_title:
+            return content.strip()
+        return f"Title Path: {relative_title}\nContent:\n{content}".strip()
 
     @staticmethod
     def _clip(text: str, max_chars: int) -> str:

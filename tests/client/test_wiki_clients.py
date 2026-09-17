@@ -48,6 +48,25 @@ async def test_local_client_forwards_split_wiki_lifecycle():
 
 
 @pytest.mark.asyncio
+async def test_local_client_forwards_explicit_full_context_backend():
+    wiki = SimpleNamespace(build_wiki=AsyncMock(return_value={"nodes": 1}))
+    client = LocalClient.__new__(LocalClient)
+    client._service = SimpleNamespace(wiki=wiki)
+    client._ctx = object()
+
+    await LocalClient.build_wiki(
+        client, ["viking://resources/demo"], node_discovery_backend="llm_full_context"
+    )
+
+    wiki.build_wiki.assert_awaited_once_with(
+        resource_uris=["viking://resources/demo"],
+        ctx=client._ctx,
+        wiki_root_uri="viking://wiki/",
+        node_discovery_backend="llm_full_context",
+    )
+
+
+@pytest.mark.asyncio
 async def test_async_client_forwards_split_wiki_lifecycle():
     client = object.__new__(AsyncOpenViking)
     client._initialized = True

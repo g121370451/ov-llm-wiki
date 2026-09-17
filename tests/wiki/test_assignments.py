@@ -5,6 +5,7 @@ from openviking.wiki.config import WikiConfig
 from openviking.wiki.schemas import (
     DocumentCard,
     SourceAssignmentItem,
+    SourceFacetMatch,
 )
 
 
@@ -30,8 +31,8 @@ def test_source_ref_builder_binds_wiki_node_cards():
         "viking://wiki/nodes/child_b/",
     ]
     assert [ref.card_uri for ref in refs] == [
-        "viking://wiki/nodes/child_a/card.md",
-        "viking://wiki/nodes/child_b/card.md",
+        "viking://wiki/nodes/child_a/card.json",
+        "viking://wiki/nodes/child_b/card.json",
     ]
 
 
@@ -71,13 +72,39 @@ def test_source_ref_builder_rejects_unknown_source_ids():
         )
 
 
+def test_source_ref_builder_records_only_matched_facets_and_evidence():
+    refs_by_node = SourceRefBuilder(WikiConfig()).build_refs_by_node(
+        [
+            SourceAssignmentItem(
+                node_id="question_answering",
+                source_ids=["OARW_1"],
+                support_scope="QA source supports the node.",
+                facet_matches_by_source_id={
+                    "OARW_1": [
+                        SourceFacetMatch(
+                            facet_id="OARW_1:qa",
+                            facet_text="Evaluation of question answering.",
+                            source_refs=["viking://resources/OARW_1/evaluation"],
+                        )
+                    ]
+                },
+            )
+        ],
+        [_card("OARW_1")],
+    )
+
+    ref = refs_by_node["question_answering"][0]
+    assert ref.matched_topics == ["Evaluation of question answering."]
+    assert ref.matched_facet_ids == ["OARW_1:qa"]
+    assert ref.matched_source_refs == ["viking://resources/OARW_1/evaluation"]
+
+
 def _card(doc_id: str) -> DocumentCard:
     return DocumentCard(
         doc_id=doc_id,
         resource_uri=f"viking://resources/{doc_id}/",
         title=f"Paper {doc_id}",
         summary="QA summary.",
-        main_points=["QA"],
         candidate_topics=["question answering"],
     )
 
@@ -88,6 +115,5 @@ def _node_card(node_id: str) -> DocumentCard:
         resource_uri=f"viking://wiki/nodes/{node_id}/",
         title=node_id.replace("_", " ").title(),
         summary="Node summary.",
-        main_points=["Node point"],
         candidate_topics=["Parent topic"],
     )

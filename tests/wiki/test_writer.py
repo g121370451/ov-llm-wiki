@@ -30,6 +30,34 @@ async def test_writer_writes_json_and_jsonl():
 
 
 @pytest.mark.asyncio
+async def test_writer_metadata_json_bypasses_content_indexing():
+    client = FakeClient()
+
+    class FailingContentWriter:
+        async def write(self, **kwargs):
+            raise AssertionError("metadata must not enter semantic content indexing")
+
+    writer = WikiVikingFSWriter(
+        viking_fs=client,
+        vikingdb=object(),
+        ctx=object(),
+        config=WikiConfig(),
+        content_writer=FailingContentWriter(),
+    )
+
+    await writer.write_metadata_json("viking://wiki/facets/doc.facets.json", {"a": 1})
+    await writer.write_metadata_jsonl(
+        "viking://wiki/clustering/runs/depth_0001.edges.jsonl",
+        [{"score": 0.9}],
+    )
+
+    assert json.loads(client.writes["viking://wiki/facets/doc.facets.json"]) == {"a": 1}
+    assert client.writes["viking://wiki/clustering/runs/depth_0001.edges.jsonl"] == (
+        '{"score": 0.9}\n'
+    )
+
+
+@pytest.mark.asyncio
 async def test_writer_ensure_dirs_uses_viking_wiki_root():
     client = FakeClient()
     writer = WikiVikingFSWriter(

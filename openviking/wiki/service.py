@@ -18,7 +18,14 @@ from .content_loader import WikiContentLoader
 from .document_manifest import load_document_manifest, wiki_inputs_from_manifest
 from .pipeline import WikiPipeline
 from .schemas import WikiResourceInput
-from .uri import card_manifest_uri, nodes_dir, run_dir, wiki_root
+from .uri import (
+    card_manifest_uri,
+    clustering_dir,
+    node_facets_dir,
+    nodes_dir,
+    run_dir,
+    wiki_root,
+)
 from .writer import WikiVikingFSWriter
 
 
@@ -85,9 +92,14 @@ class WikiService:
         resource_uris: list[str],
         ctx: RequestContext,
         wiki_root_uri: str = "viking://wiki/",
+        node_discovery_backend: Literal["llm_full_context", "facet_graph"] = "facet_graph",
     ) -> dict[str, Any]:
         self._ensure_initialized()
         self._validate_wiki_root_uri(wiki_root_uri)
+        if node_discovery_backend not in {"llm_full_context", "facet_graph"}:
+            raise InvalidArgumentError(
+                "node_discovery_backend must be either 'llm_full_context' or 'facet_graph'"
+            )
 
         normalized_resource_uris = await self._normalize_resource_uris(resource_uris, ctx)
         wiki_inputs = await self._wiki_resource_inputs_from_uris(normalized_resource_uris, ctx)
@@ -95,6 +107,7 @@ class WikiService:
             normalized_resource_uris,
             wiki_root_uri,
             ctx,
+            node_discovery_backend=node_discovery_backend,
         )
         artifacts = await pipeline.run_from_stored_cards(
             wiki_inputs,
@@ -106,6 +119,7 @@ class WikiService:
             "docs": len(wiki_inputs),
             "cards": len([card for card in artifacts.cards if card.resource_uri.startswith("viking://resources/")]),
             "cards_reused": True,
+            "node_discovery_backend": node_discovery_backend,
             "card_manifest_uri": card_manifest_uri(wiki_config),
             "nodes": len(artifacts.nodes),
             "node_contexts": len(artifacts.node_contexts),
@@ -134,6 +148,8 @@ class WikiService:
                 (nodes_dir(wiki_config), True),
                 (f"{wiki_root(wiki_config)}nodes.json", False),
                 (f"{wiki_root(wiki_config)}source_assignments.json", False),
+                (node_facets_dir(wiki_config), True),
+                (clustering_dir(wiki_config), True),
                 (run_dir(wiki_config), True),
             ]
             removed_paths = []
@@ -149,6 +165,7 @@ class WikiService:
             "cleared": not missing,
             "missing": missing,
             "cards_preserved": preserve_cards,
+            "document_facets_preserved": preserve_cards,
             "removed_paths": removed_paths,
         }
 
@@ -157,6 +174,8 @@ class WikiService:
         normalized_resource_uris: list[str],
         wiki_root_uri: str,
         ctx: RequestContext,
+        *,
+        node_discovery_backend: Literal["llm_full_context", "facet_graph"] = "facet_graph",
     ) -> tuple[WikiPipeline, WikiContentLoader, WikiConfig]:
         assert self._viking_fs is not None
         assert self._vikingdb is not None
@@ -164,6 +183,7 @@ class WikiService:
         wiki_config = WikiConfig(
             wiki_root_uri=wiki_root_uri,
             resource_root_uri=self._common_resource_root(normalized_resource_uris),
+            node_discovery_backend=node_discovery_backend,
         )
         vlm_config = getattr(get_openviking_config(), "vlm", None)
         if vlm_config is not None:

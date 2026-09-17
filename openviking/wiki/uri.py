@@ -25,10 +25,6 @@ def cards_dir(config: WikiConfig) -> str:
     return f"{wiki_root(config)}cards/"
 
 
-def card_md_uri(config: WikiConfig, doc_id: str) -> str:
-    return f"{cards_dir(config)}{doc_id}.card.md"
-
-
 def card_json_uri(config: WikiConfig, doc_id: str) -> str:
     return f"{cards_dir(config)}{doc_id}.card.json"
 
@@ -41,6 +37,50 @@ def card_run_dir(config: WikiConfig) -> str:
     return f"{cards_dir(config)}run/"
 
 
+def facets_dir(config: WikiConfig) -> str:
+    return f"{wiki_root(config)}facets/"
+
+
+def facet_json_uri(config: WikiConfig, doc_id: str) -> str:
+    return f"{facets_dir(config)}{doc_id}.facets.json"
+
+
+def facet_manifest_uri(config: WikiConfig) -> str:
+    return f"{facets_dir(config)}manifest.json"
+
+
+def facet_run_dir(config: WikiConfig) -> str:
+    return f"{facets_dir(config)}run/"
+
+
+def node_facets_dir(config: WikiConfig) -> str:
+    return f"{facets_dir(config)}nodes/"
+
+
+def node_facets_json_uri(config: WikiConfig, node_id: str) -> str:
+    return f"{node_facets_dir(config)}{sanitize_node_id(node_id)}.facets.json"
+
+
+def node_facets_manifest_uri(config: WikiConfig) -> str:
+    return f"{node_facets_dir(config)}manifest.json"
+
+
+def clustering_dir(config: WikiConfig) -> str:
+    return f"{wiki_root(config)}clustering/"
+
+
+def clustering_runs_dir(config: WikiConfig) -> str:
+    return f"{clustering_dir(config)}runs/"
+
+
+def clustering_run_uri(config: WikiConfig, depth: int) -> str:
+    return f"{clustering_runs_dir(config)}depth_{depth:04d}.json"
+
+
+def clustering_edges_uri(config: WikiConfig, depth: int) -> str:
+    return f"{clustering_runs_dir(config)}depth_{depth:04d}.edges.jsonl"
+
+
 def nodes_dir(config: WikiConfig) -> str:
     return f"{wiki_root(config)}nodes/"
 
@@ -49,18 +89,14 @@ def node_root_uri(config: WikiConfig, node_id: str) -> str:
     return f"{nodes_dir(config)}{sanitize_node_id(node_id)}/"
 
 
-def node_card_md_uri(config: WikiConfig, node_id: str) -> str:
-    return f"{node_root_uri(config, node_id)}card.md"
-
-
 def node_card_json_uri(config: WikiConfig, node_id: str) -> str:
     return f"{node_root_uri(config, node_id)}card.json"
 
 
-def card_md_uri_for_card(config: WikiConfig, card) -> str:
+def card_json_uri_for_card(config: WikiConfig, card) -> str:
     if str(card.resource_uri).startswith("viking://wiki/"):
-        return node_card_md_uri(config, card.doc_id)
-    return card_md_uri(config, card.doc_id)
+        return node_card_json_uri(config, card.doc_id)
+    return card_json_uri(config, card.doc_id)
 
 
 def node_documents_dir(config: WikiConfig, node_id: str) -> str:

@@ -47,9 +47,11 @@ class NodeDiscoveryRunner:
         reserved_node_ids: set[str] | None = None,
     ) -> NodeDiscoveryResult:
         source_ids = {card.doc_id for card in cards}
+        source_aliases = _build_source_aliases(cards)
         prompt = build_node_discovery_prompt(
             cards,
             min_sources_per_node=min_sources_per_node,
+            source_ids=list(source_aliases),
         )
         return await _complete_with_validation_retry(
             self.llm,
@@ -60,6 +62,7 @@ class NodeDiscoveryRunner:
                 result,
                 depth,
                 source_ids,
+                source_aliases,
                 reserved_node_ids or set(),
             ),
         )
@@ -69,9 +72,11 @@ class NodeDiscoveryRunner:
         result: dict,
         depth: int,
         source_ids: set[str],
+        source_aliases: dict[str, str],
         reserved_node_ids: set[str],
     ) -> NodeDiscoveryResult:
         response = WikiSourceNodeDiscoveryResponse.model_validate(result)
+        response = _resolve_source_aliases(response, source_aliases, source_ids)
         _ensure_known_sources(response, source_ids)
         nodes = self._build_nodes(response.nodes, depth, reserved_node_ids=reserved_node_ids)
         assignments = [
@@ -116,6 +121,45 @@ class NodeDiscoveryRunner:
                 )
             )
         return nodes
+
+
+def _build_source_aliases(cards: list[DocumentCard]) -> dict[str, str]:
+    width = max(4, len(str(len(cards))))
+    return {
+        f"S{index:0{width}d}": card.doc_id
+        for index, card in enumerate(cards, start=1)
+    }
+
+
+def _resolve_source_aliases(
+    response: WikiSourceNodeDiscoveryResponse,
+    source_aliases: dict[str, str],
+    source_ids: set[str],
+) -> WikiSourceNodeDiscoveryResponse:
+    def _resolve(source_id: str) -> str:
+        if source_id in source_ids:
+            return source_id
+        return source_aliases.get(source_id, source_id)
+
+    return response.model_copy(
+        update={
+            "nodes": [
+                node.model_copy(
+                    update={
+                        "supporting_source_ids": [
+                            _resolve(source_id)
+                            for source_id in node.supporting_source_ids
+                        ]
+                    }
+                )
+                for node in response.nodes
+            ],
+            "unassigned_source_ids": [
+                _resolve(source_id)
+                for source_id in response.unassigned_source_ids
+            ],
+        }
+    )
 
 
 def _ensure_known_sources(response: WikiSourceNodeDiscoveryResponse, source_ids: set[str]) -> None:

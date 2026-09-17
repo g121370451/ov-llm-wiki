@@ -30,8 +30,6 @@ template: |
   - Add or correct facts only when supported by new_source_documents.
   - Preserve existing concrete knowledge unless new evidence contradicts it; when evidence conflicts, retain the applicable conditions.
   - Synthesize by knowledge topic, not by source document. Merge overlapping evidence.
-  - Do not organize headings or paragraphs around source IDs or source titles.
-  - Do not emit URIs, source IDs, batch IDs, citations, or descriptions of the generation process.
 
   {% if phase == "initial" %}
   Initial-fill rules:

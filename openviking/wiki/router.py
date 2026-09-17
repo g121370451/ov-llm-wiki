@@ -24,6 +24,7 @@ class BuildWikiRequest(BaseModel):
 
     resource_uris: list[str] = Field(min_length=1)
     wiki_root_uri: str = "viking://wiki/"
+    node_discovery_backend: Literal["llm_full_context", "facet_graph"] = "facet_graph"
     telemetry: TelemetryRequest = False
 
 
@@ -81,6 +82,7 @@ async def build_wiki(
             resource_uris=request.resource_uris,
             ctx=_ctx,
             wiki_root_uri=request.wiki_root_uri,
+            node_discovery_backend=request.node_discovery_backend,
         )
 
     execution = await run_operation(

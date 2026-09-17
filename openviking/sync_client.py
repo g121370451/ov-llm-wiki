@@ -296,13 +296,20 @@ class SyncOpenViking:
         self,
         resource_uris: List[str],
         wiki_root_uri: str = "viking://wiki/",
+        node_discovery_backend: str = "facet_graph",
         telemetry: TelemetryRequest = False,
     ) -> Dict[str, Any]:
-        """Build Wiki nodes from reusable Document Cards."""
+        """Build Wiki nodes with facet graph discovery by default."""
+        optional = (
+            {"node_discovery_backend": node_discovery_backend}
+            if node_discovery_backend != "facet_graph"
+            else {}
+        )
         return run_async(
             self._async_client.build_wiki(
                 resource_uris=resource_uris,
                 wiki_root_uri=wiki_root_uri,
+                **optional,
                 telemetry=telemetry,
             )
         )

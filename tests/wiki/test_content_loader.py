@@ -77,6 +77,9 @@ def test_content_loader_strictly_bounds_large_multi_entry_documents():
     assert sum(len(section.content) for section in sections) <= 20000
     assert "0.md" in rendered
     assert "1999.md" in rendered
+    assert "viking://resources/" not in rendered
+    assert "URI:" not in rendered
+    assert "Type:" not in rendered
     assert sections[0].section_uri.endswith("/0.md")
     assert sections[-1].section_uri.endswith("/1999.md")
 

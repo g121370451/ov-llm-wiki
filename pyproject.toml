@@ -182,6 +182,12 @@ benchmark = [
     "datasets>=2.0.0",
     "pandas>=2.0.0",
 ]
+wiki = [
+    "numpy>=1.24.0",
+    "hnswlib>=0.8.0",
+    "python-igraph>=0.11.0",
+    "leidenalg>=0.10.0",
+]
 langchain = [
     "langchain-core>=1.0.0,<2.0.0",
 ]

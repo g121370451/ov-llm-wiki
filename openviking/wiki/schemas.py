@@ -97,7 +97,6 @@ class DocumentCardContent(StrictModel):
     """LLM 为单篇文档提炼的语义卡片内容，不包含系统已知的文档标识字段。"""
 
     summary: NonEmptyStr
-    main_points: NonEmptyStrList
     important_terms: list[str] = Field(default_factory=list)
     candidate_topics: NonEmptyStrList
 
@@ -108,7 +107,76 @@ class DocumentCard(DocumentCardContent):
     doc_id: NonEmptyStr
     resource_uri: SourceUri
     title: NonEmptyStr
-    markdown: str = ""
+
+
+class TopicFacet(StrictModel):
+    """A single, independently clusterable topic extracted from one document."""
+
+    facet_id: NonEmptyStr
+    facet_text: NonEmptyStr
+    source_refs: list[SourceUri] = Field(default_factory=list)
+
+
+class FacetRelation(StrictModel):
+    """An explicit, source-backed relation between two facets in one document."""
+
+    source_facet_id: NonEmptyStr
+    target_facet_id: NonEmptyStr
+    relation_text: NonEmptyStr
+    source_refs: list[SourceUri] = Field(default_factory=list)
+
+
+class DocumentFacetSet(StrictModel):
+    """The topic facets and explicit relations extracted from one document."""
+
+    doc_id: NonEmptyStr
+    topic_facets: list[TopicFacet] = Field(default_factory=list)
+    facet_relations: list[FacetRelation] = Field(default_factory=list)
+
+
+class TopicFacetBatchItem(StrictModel):
+    """LLM facet output using batch-local evidence aliases such as S0001."""
+
+    facet_id: NonEmptyStr
+    facet_text: NonEmptyStr
+    source_refs: list[NonEmptyStr] = Field(default_factory=list)
+
+
+class FacetRelationBatchItem(StrictModel):
+    """LLM relation output before evidence aliases are resolved to source URIs."""
+
+    source_facet_id: NonEmptyStr
+    target_facet_id: NonEmptyStr
+    relation_text: NonEmptyStr
+    source_refs: list[NonEmptyStr] = Field(default_factory=list)
+
+
+class DocumentFacetBatchResponse(StrictModel):
+    """LLM response for one bounded batch of source sections."""
+
+    topic_facets: list[TopicFacetBatchItem] = Field(default_factory=list)
+    facet_relations: list[FacetRelationBatchItem] = Field(default_factory=list)
+
+
+class DocumentFacetManifestEntry(StrictModel):
+    """One cached facet set and the source input fingerprint that produced it."""
+
+    doc_id: NonEmptyStr
+    source_hash: NonEmptyStr
+    facet_hash: NonEmptyStr
+    facet_json_uri: NonEmptyStr
+
+
+class DocumentFacetManifest(StrictModel):
+    """Version and integrity metadata for the independent facet cache."""
+
+    version: int = Field(ge=1)
+    generator_version: NonEmptyStr
+    prompt_version: NonEmptyStr
+    schema_hash: NonEmptyStr
+    max_batch_chars: int = Field(gt=0)
+    model_provenance: dict[str, Any] = Field(default_factory=dict)
+    entries: list[DocumentFacetManifestEntry]
 
 
 class DocumentCardManifestEntry(StrictModel):
@@ -120,7 +188,6 @@ class DocumentCardManifestEntry(StrictModel):
     prompt_hash: NonEmptyStr
     card_hash: NonEmptyStr
     card_json_uri: NonEmptyStr
-    card_markdown_uri: NonEmptyStr
 
 
 class DocumentCardManifest(StrictModel):
@@ -181,6 +248,16 @@ class SourceRef(StrictModel):
     title: NonEmptyStr
     support_scope: NonEmptyStr
     matched_topics: list[str] = Field(default_factory=list)
+    matched_facet_ids: list[str] = Field(default_factory=list)
+    matched_source_refs: list[str] = Field(default_factory=list)
+
+
+class SourceFacetMatch(StrictModel):
+    """Facets from one source that caused it to be assigned to a node."""
+
+    facet_id: NonEmptyStr
+    facet_text: NonEmptyStr
+    source_refs: list[SourceUri] = Field(default_factory=list)
 
 
 class SourceAssignmentResult(StrictModel):
@@ -196,6 +273,7 @@ class SourceAssignmentItem(StrictModel):
     node_id: NodeId
     source_ids: NonEmptyStrList
     support_scope: NonEmptyStr
+    facet_matches_by_source_id: dict[str, list[SourceFacetMatch]] = Field(default_factory=dict)
 
 
 class SourceAssignmentResponse(StrictModel):
@@ -238,6 +316,7 @@ class PipelineArtifacts(StrictModel):
     """Wiki pipeline 一次运行的内存产物集合，用于串联各阶段输出。"""
 
     cards: list[DocumentCard] = Field(default_factory=list)
+    facet_sets: list[DocumentFacetSet] = Field(default_factory=list)
     nodes: list[WikiNode] = Field(default_factory=list)
     source_refs_by_node: dict[str, list[SourceRef]] = Field(default_factory=dict)
     node_contexts: list[GeneratedNodeContext] = Field(default_factory=list)

@@ -238,6 +238,22 @@ class AsyncHTTPClient(import_openviking_sdk().AsyncHTTPClient):
         self,
         resource_uris: list[str],
         wiki_root_uri: str = "viking://wiki/",
+        node_discovery_backend: str = "facet_graph",
+        telemetry: Any = False,
+    ) -> Dict[str, Any]:
+        payload = {
+            "resource_uris": resource_uris,
+            "wiki_root_uri": wiki_root_uri,
+            "node_discovery_backend": node_discovery_backend,
+            "telemetry": telemetry,
+        }
+        response = await self._request("POST", "/api/v1/wiki/build", json=payload)
+        return self._handle_response_data(response).get("result", {})
+
+    async def build_wiki_cards(
+        self,
+        resource_uris: list[str],
+        wiki_root_uri: str = "viking://wiki/",
         card_input_mode: str = "summary",
         max_card_input_chars: int = 20000,
         telemetry: Any = False,
@@ -249,16 +265,20 @@ class AsyncHTTPClient(import_openviking_sdk().AsyncHTTPClient):
             "max_card_input_chars": max_card_input_chars,
             "telemetry": telemetry,
         }
-        response = await self._request("POST", "/api/v1/wiki/build", json=payload)
+        response = await self._request(
+            "POST", "/api/v1/wiki/cards/build", json=payload
+        )
         return self._handle_response_data(response).get("result", {})
 
     async def clear_wiki(
         self,
         wiki_root_uri: str = "viking://wiki/",
+        preserve_cards: bool = False,
         telemetry: Any = False,
     ) -> Dict[str, Any]:
         payload = {
             "wiki_root_uri": wiki_root_uri,
+            "preserve_cards": preserve_cards,
             "telemetry": telemetry,
         }
         response = await self._request("POST", "/api/v1/wiki/clear", json=payload)
@@ -306,12 +326,28 @@ class SyncHTTPClient(import_openviking_sdk().SyncHTTPClient):
         self,
         resource_uris: list[str],
         wiki_root_uri: str = "viking://wiki/",
+        node_discovery_backend: str = "facet_graph",
+        telemetry: Any = False,
+    ) -> Dict[str, Any]:
+        return run_async(
+            self._async_client.build_wiki(
+                resource_uris=resource_uris,
+                wiki_root_uri=wiki_root_uri,
+                node_discovery_backend=node_discovery_backend,
+                telemetry=telemetry,
+            )
+        )
+
+    def build_wiki_cards(
+        self,
+        resource_uris: list[str],
+        wiki_root_uri: str = "viking://wiki/",
         card_input_mode: str = "summary",
         max_card_input_chars: int = 20000,
         telemetry: Any = False,
     ) -> Dict[str, Any]:
         return run_async(
-            self._async_client.build_wiki(
+            self._async_client.build_wiki_cards(
                 resource_uris=resource_uris,
                 wiki_root_uri=wiki_root_uri,
                 card_input_mode=card_input_mode,
@@ -323,11 +359,13 @@ class SyncHTTPClient(import_openviking_sdk().SyncHTTPClient):
     def clear_wiki(
         self,
         wiki_root_uri: str = "viking://wiki/",
+        preserve_cards: bool = False,
         telemetry: Any = False,
     ) -> Dict[str, Any]:
         return run_async(
             self._async_client.clear_wiki(
                 wiki_root_uri=wiki_root_uri,
+                preserve_cards=preserve_cards,
                 telemetry=telemetry,
             )
         )

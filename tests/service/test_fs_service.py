@@ -521,14 +521,14 @@ async def test_context_tree_document_root_uses_directly_assigned_nodes(request_c
     assert result["kind"] == "resource_document_root"
     assert result["lines"] == [
         "- [N:retrieval_qa] Retrieval QA",
-        "  - [N:retrieval_qa:card] card.md",
+        "  - [N:retrieval_qa:card] card.json",
         "  - [D:paper_a] paper_a/",
         "    - .abstract.md",
         "    - a.md",
         "  - [D:paper_b] paper_b/",
         "    - b.md",
         "- [N:evaluation] Evaluation",
-        "  - [N:evaluation:card] card.md",
+        "  - [N:evaluation:card] card.json",
         "  - [D:paper_a] paper_a/",
         "    - .abstract.md",
         "    - a.md",
@@ -557,15 +557,15 @@ async def test_context_tree_wiki_node_uses_direct_parent_roots(request_context):
     assert result["kind"] == "wiki_node"
     assert result["lines"] == [
         "- [N:nlp_systems] NLP Systems",
-        "  - [N:nlp_systems:card] card.md",
+        "  - [N:nlp_systems:card] card.json",
         "  - [N:retrieval_qa] Retrieval QA",
-        "    - [N:retrieval_qa:card] card.md",
+        "    - [N:retrieval_qa:card] card.json",
         "    - [D:paper_a] paper_a/",
         "      - a.md",
         "    - [D:paper_b] paper_b/",
         "      - b.md",
         "  - [N:domain_adaptation] Domain Adaptation",
-        "    - [N:domain_adaptation:card] card.md",
+        "    - [N:domain_adaptation:card] card.json",
         "    - [D:paper_c] paper_c/",
         "      - c.md",
     ]
@@ -629,15 +629,15 @@ async def test_context_tree_wiki_node_with_multiple_parents_expands_each_parent(
     assert result["kind"] == "wiki_node"
     assert result["lines"] == [
         "- [N:retrieval_qa] Retrieval QA",
-        "  - [N:retrieval_qa:card] card.md",
+        "  - [N:retrieval_qa:card] card.json",
         "  - [N:evidence_grounding] Evidence Grounding",
-        "    - [N:evidence_grounding:card] card.md",
+        "    - [N:evidence_grounding:card] card.json",
         "    - [D:paper_a] paper_a/",
         "      - a.md",
         "- [N:evaluation] Evaluation",
-        "  - [N:evaluation:card] card.md",
+        "  - [N:evaluation:card] card.json",
         "  - [N:evidence_grounding] Evidence Grounding",
-        "    - [N:evidence_grounding:card] card.md",
+        "    - [N:evidence_grounding:card] card.json",
         "    - [D:paper_a] paper_a/",
         "      - a.md",
     ]

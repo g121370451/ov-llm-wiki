@@ -248,6 +248,9 @@ async def test_service_clear_wiki_is_idempotent_for_missing_root():
 async def test_service_clear_wiki_can_preserve_cards():
     existing = {
         "viking://wiki/cards/",
+        "viking://wiki/facets/manifest.json",
+        "viking://wiki/facets/nodes/",
+        "viking://wiki/clustering/",
         "viking://wiki/nodes/",
         "viking://wiki/nodes.json",
         "viking://wiki/source_assignments.json",
@@ -271,10 +274,14 @@ async def test_service_clear_wiki_can_preserve_cards():
     result = await service.clear_wiki(ctx=object(), preserve_cards=True)
 
     assert result["cards_preserved"] is True
+    assert result["document_facets_preserved"] is True
     assert "viking://wiki/cards/" not in result["removed_paths"]
+    assert "viking://wiki/facets/manifest.json" not in result["removed_paths"]
     assert viking_fs.removed == [
         ("viking://wiki/nodes/", True),
         ("viking://wiki/nodes.json", False),
         ("viking://wiki/source_assignments.json", False),
+        ("viking://wiki/facets/nodes/", True),
+        ("viking://wiki/clustering/", True),
         ("viking://wiki/run/", True),
     ]

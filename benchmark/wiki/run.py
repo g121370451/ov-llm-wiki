@@ -115,8 +115,30 @@ def main():
     parser.add_argument("--config", default=default_config_path,
                         help=f"Path to config file. Default: {default_config_path}")
 
-    parser.add_argument("--step", choices=["all", "import", "build_cards", "build_wiki", "clear_wiki", "gen", "eval", "gen+eval", "del"], default="all",
-                        help="Execution step: 'import', 'build_cards', 'build_wiki', 'clear_wiki', 'gen', 'eval', 'gen+eval', 'del', or 'all'")
+    parser.add_argument(
+        "--step",
+        choices=[
+            "no_wiki",
+            "rebuild_wiki",
+            "with_wiki",
+            "import",
+            "build_cards",
+            "build_wiki",
+            "clear_wiki",
+            "gen",
+            "eval",
+            "gen+eval",
+            "del",
+        ],
+        default="no_wiki",
+        help=(
+            "Execution step: 'no_wiki' (import+gen+eval), "
+            "'rebuild_wiki' (build_wiki+gen+eval), "
+            "'with_wiki' (build_cards+build_wiki+gen+eval), "
+            "'import', 'build_cards', 'build_wiki', 'clear_wiki', "
+            "'gen', 'eval', 'gen+eval', or 'del'"
+        ),
+    )
     parser.add_argument(
         "--preserve-cards",
         action="store_true",
@@ -218,21 +240,21 @@ def main():
         # 2. Vector Store
         mode = resolve_execution_mode(config)
         skip_ingestion = bool(config.get('execution', {}).get('skip_ingestion', False))
-        build_wiki_enabled = bool(config.get('execution', {}).get('build_wiki', False))
-        will_import = args.step in ("all", "import") and not skip_ingestion
-        if args.step == "import" and skip_ingestion:
-            raise RuntimeError("execution.skip_ingestion=true conflicts with --step import")
-        if args.step == "all" and skip_ingestion and not os.path.exists(config['paths']['vector_store']):
-            raise RuntimeError(
-                f"execution.skip_ingestion=true but vector store does not exist: {config['paths']['vector_store']}"
-            )
+        import_steps = {"no_wiki", "import"}
+        build_cards_steps = {"with_wiki", "build_cards"}
+        build_wiki_steps = {"rebuild_wiki", "with_wiki", "build_wiki"}
+        generation_steps = {"no_wiki", "rebuild_wiki", "with_wiki", "gen", "gen+eval"}
+        evaluation_steps = {"no_wiki", "rebuild_wiki", "with_wiki", "eval", "gen+eval"}
+
+        will_import = args.step in import_steps and not skip_ingestion
+        if args.step in import_steps and skip_ingestion:
+            raise RuntimeError(f"execution.skip_ingestion=true conflicts with --step {args.step}")
         needs_vector_store = (
             mode == BASELINE_MODE
             or will_import
-            or args.step == "build_cards"
-            or args.step == "build_wiki"
+            or args.step in build_cards_steps
+            or args.step in build_wiki_steps
             or args.step == "clear_wiki"
-            or (args.step == "all" and build_wiki_enabled)
             or args.step == "del"
         )
         if mode == VIKINGBOT_MODE and args.step in ("gen", "eval", "gen+eval"):
@@ -264,28 +286,19 @@ def main():
         )
 
         # --- E. Execute Tasks ---
-        if args.step in ["all", "import"]:
-            if skip_ingestion:
-                logger.info("Stage: Import skipped by execution.skip_ingestion=true")
-            else:
-                logger.info("Stage: Import (Data Prepare -> Ingest)")
-                pipeline.run_import()
+        if args.step in import_steps:
+            logger.info("Stage: Import (Data Prepare -> Ingest)")
+            pipeline.run_import()
 
-            if args.step == "all" and build_wiki_enabled:
-                logger.info("Stage: Build Document Cards")
-                pipeline.run_build_cards()
-                logger.info("Stage: Build Wiki")
-                pipeline.run_build_wiki()
-
-            if args.step == "all" and mode == BASELINE_MODE and not skip_ingestion:
+            if args.step == "no_wiki" and mode == BASELINE_MODE:
                 pipeline.db.close()
                 pipeline.db = VikingStoreWrapper(store_path=config['paths']['vector_store'])
 
-        if args.step == "build_cards":
+        if args.step in build_cards_steps:
             logger.info("Stage: Build Document Cards")
             pipeline.run_build_cards()
 
-        if args.step == "build_wiki":
+        if args.step in build_wiki_steps:
             logger.info("Stage: Build Wiki")
             pipeline.run_build_wiki()
 
@@ -293,14 +306,14 @@ def main():
             logger.info("Stage: Clear Wiki")
             pipeline.run_clear_wiki(preserve_cards=args.preserve_cards)
 
-        if args.step in ["all", "gen", "gen+eval"]:
+        if args.step in generation_steps:
             if mode == VIKINGBOT_MODE and pipeline.db is not None:
                 pipeline.db.close()
                 pipeline.db = None
             logger.info("Stage: Generation")
             pipeline.run_generation()
 
-        if args.step in ["all", "eval", "gen+eval"]:
+        if args.step in evaluation_steps:
             logger.info("Stage: Evaluation (Judge -> Metrics)")
             pipeline.run_evaluation()
 

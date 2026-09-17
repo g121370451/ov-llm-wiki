@@ -1003,7 +1003,7 @@ class FSService:
                 add_line(f"{'  ' * indent}- [N:{node_id}] {title} (cycle)")
                 return
             add_line(f"{'  ' * indent}- [N:{node_id}] {title}")
-            add_line(f"{'  ' * (indent + 1)}- [N:{node_id}:card] card.md")
+            add_line(f"{'  ' * (indent + 1)}- [N:{node_id}:card] card.json")
 
             next_path = {*path, node_id}
             for child_node_id in _wiki_direct_child_node_ids(nodes, node_id):

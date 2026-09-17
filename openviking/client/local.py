@@ -194,9 +194,15 @@ class LocalClient(BaseClient):
         self,
         resource_uris: List[str],
         wiki_root_uri: str = "viking://wiki/",
+        node_discovery_backend: str = "facet_graph",
         telemetry: TelemetryRequest = False,
     ) -> Dict[str, Any]:
-        """Build Wiki nodes from reusable Document Cards."""
+        """Build Wiki nodes with facet graph discovery by default."""
+        optional = (
+            {"node_discovery_backend": node_discovery_backend}
+            if node_discovery_backend != "facet_graph"
+            else {}
+        )
         execution = await run_with_telemetry(
             operation="wiki.build",
             telemetry=telemetry,
@@ -204,6 +210,7 @@ class LocalClient(BaseClient):
                 resource_uris=resource_uris,
                 ctx=self._ctx,
                 wiki_root_uri=wiki_root_uri,
+                **optional,
             ),
         )
         return attach_telemetry_payload(execution.result, execution.telemetry)

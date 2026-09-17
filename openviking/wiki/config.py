@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+NodeDiscoveryBackend = Literal["llm_full_context", "facet_graph"]
 
 
 @dataclass
@@ -30,6 +32,19 @@ class WikiGenerationLimits:
     node_source_score_threshold: float | None = None
     # 单个节点内并行检索多少篇原始来源。
     node_source_retrieval_concurrency: int = 8
+    # Facet extraction batch size. Unlike Card input, all source sections are
+    # covered across batches instead of truncating the document.
+    max_facet_batch_chars: int = 30000
+    # Maximum cross-document neighbours retained for each facet.
+    facet_neighbor_limit: int = 20
+    # Absolute cosine threshold for retaining a facet similarity edge.
+    facet_edge_score_threshold: float = 0.72
+    # CPM resolution used by Leiden; higher values produce finer communities.
+    facet_cpm_resolution: float = 0.7
+    # Near-duplicate facets in one document are merged above this cosine score.
+    facet_dedup_score_threshold: float = 0.92
+    # Deterministic seed for Leiden community discovery.
+    facet_leiden_seed: int = 0
 
 
 @dataclass
@@ -44,3 +59,6 @@ class WikiConfig:
     limits: WikiGenerationLimits = field(default_factory=WikiGenerationLimits)
     # 传给底层 VLM/LLM 的模型配置。
     vlm_config: dict[str, Any] | None = None
+    # Facets are the production discovery representation. The full-context LLM
+    # path remains available as a small-corpus baseline.
+    node_discovery_backend: NodeDiscoveryBackend = "facet_graph"

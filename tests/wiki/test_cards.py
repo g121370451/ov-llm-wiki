@@ -36,7 +36,6 @@ async def test_node_card_uses_wiki_node_uri_and_node_card_step():
         [
             {
                 "summary": "Question answering node synthesis.",
-                "main_points": ["QA synthesis"],
                 "important_terms": ["question answering"],
                 "candidate_topics": ["question answering systems"],
             }

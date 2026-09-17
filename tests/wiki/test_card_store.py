@@ -5,7 +5,7 @@ import pytest
 from openviking.wiki.card_store import DocumentCardStore
 from openviking.wiki.config import WikiConfig
 from openviking.wiki.schemas import DocumentCard, ResourceDocument, SourceSection
-from openviking.wiki.uri import card_json_uri, card_manifest_uri, card_md_uri
+from openviking.wiki.uri import card_json_uri, card_manifest_uri
 from openviking.wiki.writer import WikiVikingFSWriter
 from openviking_cli.exceptions import FailedPreconditionError
 
@@ -35,7 +35,6 @@ async def test_card_store_round_trip_writes_manifest_last():
     assert manifest.entries[0].doc_id == doc.doc_id
     assert client.write_order[-1] == card_manifest_uri(config)
     assert card_json_uri(config, doc.doc_id) in client.writes
-    assert card_md_uri(config, doc.doc_id) in client.writes
 
 
 @pytest.mark.asyncio
@@ -59,14 +58,13 @@ async def test_card_store_rejects_changed_document_card_prompt():
 
 
 @pytest.mark.asyncio
-async def test_card_store_rejects_tampered_card_and_missing_markdown():
+async def test_card_store_rejects_tampered_card():
     client, store, config = _store()
     doc = _doc()
     await _replace(store, doc)
     client.writes[card_json_uri(config, doc.doc_id)] = json.dumps(
         _card().model_copy(update={"summary": "Tampered."}).model_dump(mode="json")
     )
-    client.writes.pop(card_md_uri(config, doc.doc_id))
 
     with pytest.raises(FailedPreconditionError) as exc_info:
         await store.load_validated(
@@ -77,7 +75,6 @@ async def test_card_store_rejects_tampered_card_and_missing_markdown():
 
     reasons = exc_info.value.details["reasons"]
     assert any("card content hash changed" in reason for reason in reasons)
-    assert any("card markdown is missing" in reason for reason in reasons)
 
 
 @pytest.mark.asyncio
@@ -106,6 +103,53 @@ async def test_card_store_rejects_missing_manifest():
         await store.read_manifest()
 
     assert "run build_cards before build_wiki" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_card_store_loads_known_v1_cache_without_regenerating_cards():
+    client, store, config = _store()
+    doc = _doc()
+    card = _card()
+    legacy_card = {
+        **card.model_dump(mode="json"),
+        "main_points": ["Legacy main point."],
+        "markdown": "# Legacy card\n",
+    }
+    legacy_card_hash = _json_hash(legacy_card)
+    client.writes[card_json_uri(config, doc.doc_id)] = json.dumps(legacy_card)
+    client.writes[card_manifest_uri(config)] = json.dumps(
+        {
+            "version": 1,
+            "pipeline_version": config.pipeline_version,
+            "prompt_version": "doc_card_v1",
+            "schema_hash": (
+                "sha256:9a14daaa99dc90e92c3dfdba4af2721db035022e4c7b7c66fa02ef294aadfc30"
+            ),
+            "card_input_mode": "summary",
+            "max_card_input_chars": 20000,
+            "resource_uris": ["viking://resources/demo"],
+            "entries": [
+                {
+                    "doc_id": doc.doc_id,
+                    "resource_uri": doc.resource_uri,
+                    "title": doc.title,
+                    "prompt_hash": "sha256:legacy-prompt",
+                    "card_hash": legacy_card_hash,
+                    "card_json_uri": card_json_uri(config, doc.doc_id),
+                    "card_markdown_uri": "viking://wiki/cards/doc_1.card.md",
+                }
+            ],
+        }
+    )
+
+    manifest = await store.read_manifest()
+    loaded = await store.load_validated(
+        manifest=manifest,
+        resource_documents=[doc],
+        resource_uris=["viking://resources/demo"],
+    )
+
+    assert loaded == [card]
 
 
 def _store():
@@ -157,8 +201,13 @@ def _card(doc_id: str = "doc_1") -> DocumentCard:
         resource_uri=f"viking://resources/demo/{doc_id}",
         title=f"Document {doc_id}",
         summary=f"Summary for {doc_id}.",
-        main_points=["Main point"],
         important_terms=["term"],
         candidate_topics=["topic"],
-        markdown=f"# Document {doc_id}\n",
     )
+
+
+def _json_hash(value: object) -> str:
+    import hashlib
+
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"

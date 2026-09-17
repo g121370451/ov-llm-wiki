@@ -140,7 +140,9 @@ class VikingStoreWrapper:
         result["time"] = time.time() - start_time
         return result
 
-    def build_wiki(self, resource_uris: list[str]) -> dict:
+    def build_wiki(
+        self, resource_uris: list[str], node_discovery_backend: str = "facet_graph"
+    ) -> dict:
         start_time = time.time()
         if not resource_uris:
             return {
@@ -148,7 +150,10 @@ class VikingStoreWrapper:
                 "status": "skipped",
                 "resource_uris": [],
             }
-        result = self.client.build_wiki(resource_uris=resource_uris)
+        result = self.client.build_wiki(
+            resource_uris=resource_uris,
+            node_discovery_backend=node_discovery_backend,
+        )
         result["time"] = time.time() - start_time
         return result
 

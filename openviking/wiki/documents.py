@@ -189,11 +189,21 @@ class NodeContentGenerator:
         *,
         required_h2: set[str],
     ) -> str:
-        markdown = NodeMarkdownResponse.model_validate(result).markdown
+        markdown = NodeMarkdownResponse.model_validate(result).markdown.strip()
+        lines = markdown.splitlines()
+        if not lines or not re.match(r"^#\s+\S", lines[0].strip()):
+            raise RuntimeError(f"node document must start with H1: # {node.title}")
+        # The node title is already canonical pipeline state. Models sometimes
+        # rewrite spelling or punctuation in the H1 even when the body is valid;
+        # normalize that presentation field locally instead of spending retries
+        # and potentially failing the whole build. Structural H1 validation below
+        # still rejects additional or misplaced H1 headings.
+        lines[0] = f"# {node.title}"
+        markdown = "\n".join(lines)
         headings = _markdown_headings(markdown)
         h1 = [text for level, text in headings if level == 1]
-        if h1 != [node.title] or markdown.splitlines()[0].strip() != f"# {node.title}":
-            raise RuntimeError(f"node document H1 must be exactly: # {node.title}")
+        if h1 != [node.title]:
+            raise RuntimeError(f"node document must contain only H1: # {node.title}")
         h2 = {text for level, text in headings if level == 2}
         if not h2:
             raise RuntimeError("node document must contain at least one H2 heading")
@@ -205,7 +215,7 @@ class NodeContentGenerator:
             raise RuntimeError(
                 f"node document exceeds {self.max_document_tokens} tokens: {token_count}"
             )
-        return markdown.strip()
+        return markdown
 
 
 def _selected_source_payload(source: SelectedSourceDocument) -> dict:

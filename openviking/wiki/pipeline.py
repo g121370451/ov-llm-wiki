@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import asdict
 from typing import Any
 
 from openviking.utils.token_estimation import estimate_text_tokens
+from openviking_cli.exceptions import FailedPreconditionError
 
 from .assignments import SourceRefBuilder
 from .card_store import DocumentCardStore
@@ -15,24 +17,30 @@ from .cards import DocumentCardGenerator
 from .config import WikiConfig
 from .content_loader import WikiCardInputMode, WikiContentLoader
 from .documents import NodeContentGenerator
+from .facet_discovery import ScalableNodeDiscoveryRunner
+from .facet_store import DocumentFacetStore
+from .facets import DocumentFacetGenerator
 from .layer_decision import LayerDecisionRunner
 from .llm import WikiLLMRunner
 from .nodes import NodeDiscoveryRunner
 from .schemas import (
     DocumentCard,
+    DocumentFacetSet,
     GeneratedNodeContext,
     PipelineArtifacts,
     ResourceDocument,
     SourceAssignmentResult,
     SourceRef,
+    SourceSection,
     WikiNode,
     WikiResourceInput,
 )
 from .source_selector import NodeSourceSelector
 from .uri import (
     card_run_dir,
+    clustering_edges_uri,
+    clustering_run_uri,
     node_card_json_uri,
-    node_card_md_uri,
     node_document_uri,
     node_root_uri,
     node_sources_dir,
@@ -72,6 +80,14 @@ class WikiPipeline:
             max_concurrent=self.config.limits.max_concurrent_cards,
         )
         self.node_discovery = NodeDiscoveryRunner(self.llm, self.config)
+        self.embedder = _writer_embedder(writer)
+        self.facet_generator = DocumentFacetGenerator(
+            self.llm,
+            max_batch_chars=self.config.limits.max_facet_batch_chars,
+            max_concurrent=self.config.limits.max_concurrent_cards,
+            embedder=self.embedder,
+            dedup_score_threshold=self.config.limits.facet_dedup_score_threshold,
+        )
         self.source_ref_builder = SourceRefBuilder(self.config)
         self.content_generator = NodeContentGenerator(
             self.llm,
@@ -174,10 +190,18 @@ class WikiPipeline:
             resource_uris=resource_uris,
         )
         source_docs = await self._load_source_documents(docs, content_loader)
+        facet_sets: list[DocumentFacetSet] = []
+        if self.config.node_discovery_backend == "facet_graph":
+            if self.embedder is None:
+                raise RuntimeError(
+                    "facet node discovery requires a configured dense embedding model"
+                )
+            facet_sets = await self._load_or_generate_facets(source_docs)
         return await self._run_from_cards(
             cards,
-            PipelineArtifacts(),
+            PipelineArtifacts(facet_sets=facet_sets),
             {doc.doc_id: doc for doc in source_docs},
+            facet_sets_by_source_id={item.doc_id: item for item in facet_sets},
         )
 
     async def _load_documents(
@@ -230,11 +254,38 @@ class WikiPipeline:
             ctx=self.writer.ctx,
         )
 
+    def _facet_store(self) -> DocumentFacetStore:
+        return DocumentFacetStore(
+            viking_fs=self.writer.viking_fs,
+            writer=self.writer,
+            config=self.config,
+            ctx=self.writer.ctx,
+        )
+
+    async def _load_or_generate_facets(
+        self, resource_documents: list[ResourceDocument]
+    ) -> list[DocumentFacetSet]:
+        store = self._facet_store()
+        if await store.exists():
+            try:
+                return await store.load_validated(resource_documents)
+            except FailedPreconditionError as exc:
+                logger.info("[Wiki] Facet cache cannot be reused: %s", exc)
+        facet_sets = await self.facet_generator.generate(resource_documents)
+        await store.replace(
+            facet_sets=facet_sets,
+            resource_documents=resource_documents,
+            max_batch_chars=self.config.limits.max_facet_batch_chars,
+            model_provenance=_redact_sensitive_config(self.config.vlm_config or {}),
+        )
+        return facet_sets
+
     async def _run_from_cards(
         self,
         cards: list[DocumentCard],
         artifacts: PipelineArtifacts,
         resource_documents_by_id: dict[str, ResourceDocument],
+        facet_sets_by_source_id: dict[str, DocumentFacetSet] | None = None,
     ) -> PipelineArtifacts:
         all_cards: list[DocumentCard] = list(cards)
         source_documents_by_id = dict(resource_documents_by_id)
@@ -245,7 +296,12 @@ class WikiPipeline:
         all_source_refs_by_node: dict[str, list[SourceRef]] = {}
         all_unassigned_source_ids: list[str] = []
         all_contexts: list[GeneratedNodeContext] = []
+        all_node_documents: list[ResourceDocument] = []
+        all_node_facet_sets: list[DocumentFacetSet] = []
         previous_layer_cards: list[DocumentCard] = []
+        current_facet_sets_by_source_id: dict[str, DocumentFacetSet] = dict(
+            facet_sets_by_source_id or {}
+        )
         reserved_node_ids = {card.doc_id for card in cards}
 
         for depth in range(1, self.config.limits.max_depth + 1):
@@ -253,21 +309,56 @@ class WikiPipeline:
             if depth == 1:
                 min_sources = self.config.limits.min_refs_per_node
                 logger.info(
-                    "[Wiki] Discovering bottom-layer nodes from %d card topics", len(source_cards)
+                    "[Wiki] Discovering bottom-layer nodes from %d source documents",
+                    len(source_cards),
                 )
             else:
                 min_sources = self.config.limits.min_child_nodes_per_parent
                 logger.info(
-                    "[Wiki] Discovering depth=%d parent nodes from %d previous-layer cards",
+                    "[Wiki] Discovering depth=%d parent nodes from %d source nodes",
                     depth,
                     len(source_cards),
                 )
-            discovery = await self.node_discovery.discover_layer(
-                source_cards,
-                depth=depth,
-                min_sources_per_node=min_sources,
-                reserved_node_ids=reserved_node_ids,
-            )
+            if self.config.node_discovery_backend == "facet_graph":
+                expected_source_ids = {card.doc_id for card in source_cards}
+                actual_source_ids = set(current_facet_sets_by_source_id)
+                if actual_source_ids != expected_source_ids:
+                    missing = sorted(expected_source_ids - actual_source_ids)
+                    unexpected = sorted(actual_source_ids - expected_source_ids)
+                    raise RuntimeError(
+                        "facet_graph source/facet mismatch: "
+                        f"missing={missing} unexpected={unexpected}"
+                    )
+                facet_discovery = ScalableNodeDiscoveryRunner(
+                    self.llm,
+                    self.embedder,
+                    neighbor_limit=self.config.limits.facet_neighbor_limit,
+                    edge_score_threshold=self.config.limits.facet_edge_score_threshold,
+                    cpm_resolution=self.config.limits.facet_cpm_resolution,
+                    leiden_seed=self.config.limits.facet_leiden_seed,
+                )
+                discovery = await facet_discovery.discover_layer(
+                    facet_sets_by_source_id=current_facet_sets_by_source_id,
+                    depth=depth,
+                    min_sources_per_node=min_sources,
+                    reserved_node_ids=reserved_node_ids,
+                )
+                await self.writer.ensure_clustering_dirs()
+                await self.writer.write_metadata_json(
+                    clustering_run_uri(self.config, depth),
+                    facet_discovery.last_run_artifact,
+                )
+                await self.writer.write_metadata_jsonl(
+                    clustering_edges_uri(self.config, depth),
+                    facet_discovery.last_run_edges,
+                )
+            else:
+                discovery = await self.node_discovery.discover_layer(
+                    source_cards,
+                    depth=depth,
+                    min_sources_per_node=min_sources,
+                    reserved_node_ids=reserved_node_ids,
+                )
             layer_nodes = discovery.nodes
 
             active_nodes = [node for node in layer_nodes if node.status == "active"]
@@ -283,7 +374,7 @@ class WikiPipeline:
                 break
 
             logger.info(
-                "[Wiki] Building source refs for %d nodes from %d source cards",
+                "[Wiki] Building source refs for %d nodes from %d source documents",
                 len(active_nodes),
                 len(source_cards),
             )
@@ -352,6 +443,28 @@ class WikiPipeline:
                     for context in layer_contexts
                 }
             )
+            if self.config.node_discovery_backend == "facet_graph":
+                node_documents = [
+                    source_documents_by_id[context.node.node_id]
+                    for context in layer_contexts
+                ]
+                node_facet_sets = await self.facet_generator.generate(node_documents)
+                all_node_documents.extend(node_documents)
+                all_node_facet_sets.extend(node_facet_sets)
+                await self._facet_store().replace_node_facets(
+                    facet_sets=all_node_facet_sets,
+                    resource_documents=all_node_documents,
+                    max_batch_chars=self.config.limits.max_facet_batch_chars,
+                    model_provenance=_redact_sensitive_config(
+                        self.config.vlm_config or {}
+                    ),
+                )
+                artifacts.facet_sets.extend(node_facet_sets)
+                current_facet_sets_by_source_id = {
+                    facet_set.doc_id: facet_set for facet_set in node_facet_sets
+                }
+            else:
+                current_facet_sets_by_source_id = {}
             logger.info(
                 "[Wiki] Depth=%d generated %d node contexts (total=%d)",
                 depth,
@@ -364,6 +477,8 @@ class WikiPipeline:
 
             if depth >= self.config.limits.max_depth:
                 break
+            if self.config.node_discovery_backend == "facet_graph":
+                continue
 
             continue_upward = await self.layer_decision_runner.should_continue_upward(
                 layer_contexts,
@@ -484,7 +599,6 @@ class WikiPipeline:
         return context
 
     async def _write_node_card(self, node: WikiNode, card: DocumentCard) -> None:
-        await self.writer.write_text(node_card_md_uri(self.config, node.node_id), card.markdown)
         await self.writer.write_json(node_card_json_uri(self.config, node.node_id), card)
 
     async def _write_source_refs(self, node: WikiNode, source_refs: list[SourceRef]) -> None:
@@ -498,6 +612,7 @@ class WikiPipeline:
         run_root = run_dir(self.config)
         run_config = {
             "pipeline_version": self.config.pipeline_version,
+            "node_discovery_backend": self.config.node_discovery_backend,
             "model_config": _redact_sensitive_config(self.config.vlm_config or {}),
             "limits": asdict(self.config.limits),
         }
@@ -538,12 +653,22 @@ def _source_documents_for_refs(
             )
         if not resource_document.source_sections:
             raise RuntimeError(f"node source ref has no source sections: {source_ref.doc_id}")
+        matched_uris = set(source_ref.matched_source_refs)
+        source_sections = [
+            section
+            for section in resource_document.source_sections
+            if not matched_uris or section.section_uri in matched_uris
+        ]
+        if not source_sections:
+            raise RuntimeError(
+                f"node source ref has no sections matching facet evidence: {source_ref.doc_id}"
+            )
         source_documents.append(
             {
                 "source_id": source_ref.doc_id,
                 "title": source_ref.title,
                 "sections": [
-                    section.model_dump(mode="json") for section in resource_document.source_sections
+                    section.model_dump(mode="json") for section in source_sections
                 ],
             }
         )
@@ -561,6 +686,13 @@ def _redact_sensitive_config(value: object) -> object:
     if isinstance(value, list):
         return [_redact_sensitive_config(item) for item in value]
     return value
+
+
+def _writer_embedder(writer: WikiVikingFSWriter) -> Any | None:
+    get_embedder = getattr(writer.vikingdb, "get_embedder", None)
+    if not callable(get_embedder):
+        return None
+    return get_embedder()
 
 
 def _reject_nodes_with_insufficient_refs(
@@ -588,6 +720,18 @@ def _reject_nodes_with_insufficient_refs(
         )
         for node in layer_nodes
     ]
+    if is_parent_layer:
+        duplicate_node_ids = _duplicate_parent_nodes_with_same_support(
+            updated_layer_nodes, assignment_result
+        )
+        if duplicate_node_ids:
+            unsupported_node_ids.update(duplicate_node_ids)
+            updated_layer_nodes = [
+                node.model_copy(update={"status": "rejected"})
+                if node.node_id in duplicate_node_ids
+                else node
+                for node in updated_layer_nodes
+            ]
     if not unsupported_node_ids and not is_parent_layer:
         return layer_nodes, active_nodes, assignment_result
 
@@ -606,6 +750,31 @@ def _reject_nodes_with_insufficient_refs(
         [node for node in updated_layer_nodes if node.status == "active"],
         filtered_assignment_result,
     )
+
+
+def _duplicate_parent_nodes_with_same_support(
+    layer_nodes: list[WikiNode],
+    assignment_result: SourceAssignmentResult,
+) -> set[str]:
+    seen_support: set[tuple[str, ...]] = set()
+    duplicate_node_ids: set[str] = set()
+    for node in layer_nodes:
+        if node.status != "active" or not node.child_node_ids:
+            continue
+        support_signature = tuple(
+            sorted(
+                {
+                    ref.doc_id
+                    for ref in assignment_result.source_refs_by_node.get(node.node_id, [])
+                    if ref.ref_type == "wiki_node"
+                }
+            )
+        )
+        if support_signature in seen_support:
+            duplicate_node_ids.add(node.node_id)
+            continue
+        seen_support.add(support_signature)
+    return duplicate_node_ids
 
 
 def _with_child_node_ids_from_refs(
@@ -656,11 +825,34 @@ def _resource_document_for_node(
         resource_uri=node_root_uri(config, context.node.node_id),
         title=context.node.title,
         content_or_structure=context.document.content,
-        source_sections=[
-            {
-                "section_uri": node_document_uri(config, context.node.node_id),
-                "content": context.document.content,
-            }
-        ],
+        source_sections=_node_document_sections(config, context),
         metadata={"source_type": "wiki_node"},
     )
+
+
+_MARKDOWN_HEADING_RE = re.compile(r"(?m)^#{1,6}\s+.+$")
+
+
+def _node_document_sections(
+    config: WikiConfig, context: GeneratedNodeContext
+) -> list[SourceSection]:
+    content = context.document.content.strip()
+    document_uri = node_document_uri(config, context.node.node_id)
+    headings = list(_MARKDOWN_HEADING_RE.finditer(content))
+    if not headings:
+        return [SourceSection(section_uri=document_uri, content=content)]
+
+    starts = [0] if headings[0].start() > 0 else []
+    starts.extend(match.start() for match in headings)
+    sections: list[SourceSection] = []
+    for index, start in enumerate(starts, start=1):
+        end = starts[index] if index < len(starts) else len(content)
+        section_content = content[start:end].strip()
+        if section_content:
+            sections.append(
+                SourceSection(
+                    section_uri=f"{document_uri}#section-{index:04d}",
+                    content=section_content,
+                )
+            )
+    return sections

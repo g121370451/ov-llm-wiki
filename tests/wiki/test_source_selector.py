@@ -84,6 +84,21 @@ async def test_selector_fails_when_no_source_has_a_mappable_match():
         await selector.select(_node(), [ref], {"a": _doc("a")})
 
 
+@pytest.mark.asyncio
+async def test_selector_uses_facet_evidence_without_another_search():
+    ref = _ref("a").model_copy(
+        update={"matched_source_refs": ["a/second"]}
+    )
+    fs = FakeVikingFS(error=AssertionError("find should not be called"))
+
+    selected = await NodeSourceSelector(fs, "ctx", WikiGenerationLimits()).select(
+        _node(), [ref], {"a": _doc("a")}
+    )
+
+    assert fs.calls == []
+    assert [section.section_uri for section in selected[0].sections] == ["a/second"]
+
+
 def _node():
     return WikiNode(node_id="topic", title="Topic", depth=1, scope="Canonical scope")
 
@@ -93,7 +108,7 @@ def _ref(source_id: str):
         ref_id=source_id,
         doc_id=source_id,
         resource_uri=f"viking://resources/{source_id}/",
-        card_uri=f"viking://wiki/cards/{source_id}.card.md",
+        card_uri=f"viking://wiki/cards/{source_id}.card.json",
         title=f"Source {source_id}",
         support_scope="Support",
         matched_topics=["topic", "topic"],

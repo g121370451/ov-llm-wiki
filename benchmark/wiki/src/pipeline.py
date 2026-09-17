@@ -168,14 +168,20 @@ class BenchmarkPipeline:
         return card_stats
 
     def run_build_wiki(self):
-        """Stage: Build Wiki nodes from reusable Document Cards."""
+        """Stage: Build Wiki nodes with the configured discovery backend."""
         self.logger.info(">>> Stage: Build Wiki")
         if not self.db:
             raise RuntimeError("Cannot build Wiki without a vector store")
 
         resource_uris = self._read_resource_manifest()
+        node_discovery_backend = self.config["execution"].get(
+            "wiki_node_discovery_backend", "facet_graph"
+        )
         self.logger.info(f"Building Wiki for {len(resource_uris)} resource roots")
-        wiki_stats = self.db.build_wiki(resource_uris=resource_uris)
+        wiki_stats = self.db.build_wiki(
+            resource_uris=resource_uris,
+            node_discovery_backend=node_discovery_backend,
+        )
         token_usage = wiki_stats.get("token_usage") or {}
         total_usage = token_usage.get("total_usage") or {}
         call_count = self._llm_call_count(token_usage)

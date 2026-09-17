@@ -61,6 +61,28 @@ async def test_build_wiki_router_calls_service(monkeypatch):
     assert body["result"]["wiki_root_uri"] == "viking://wiki/"
     assert seen["resource_uris"] == ["viking://resources/demo"]
     assert "card_input_mode" not in seen
+    assert seen["node_discovery_backend"] == "facet_graph"
+
+
+async def test_build_wiki_router_accepts_full_context_backend(monkeypatch):
+    seen = {}
+
+    async def fake_build_wiki(**kwargs):
+        seen.update(kwargs)
+        return {"status": "success"}
+
+    service = SimpleNamespace(wiki=SimpleNamespace(build_wiki=fake_build_wiki))
+    monkeypatch.setattr("openviking.wiki.router.get_service", lambda: service)
+
+    await build_wiki(
+        BuildWikiRequest(
+            resource_uris=["viking://resources/demo"],
+            node_discovery_backend="llm_full_context",
+        ),
+        _ctx=object(),
+    )
+
+    assert seen["node_discovery_backend"] == "llm_full_context"
 
 
 async def test_clear_wiki_router_calls_service(monkeypatch):

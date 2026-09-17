@@ -17,11 +17,17 @@ from .schemas import (
     DocumentCardManifestEntry,
     ResourceDocument,
 )
-from .uri import card_json_uri, card_manifest_uri, card_md_uri, cards_dir
+from .uri import card_json_uri, card_manifest_uri, cards_dir
 from .writer import WikiVikingFSWriter
 
-CARD_MANIFEST_VERSION = 1
-DOCUMENT_CARD_PROMPT_VERSION = "doc_card_v1"
+CARD_MANIFEST_VERSION = 2
+DOCUMENT_CARD_PROMPT_VERSION = "doc_card_v3"
+LEGACY_CARD_MANIFEST_VERSION = 1
+LEGACY_DOCUMENT_CARD_PROMPT_VERSION = "doc_card_v1"
+LEGACY_DOCUMENT_CARD_SCHEMA_HASHES = {
+    "sha256:9a14daaa99dc90e92c3dfdba4af2721db035022e4c7b7c66fa02ef294aadfc30"
+}
+LEGACY_CARD_FIELDS = {"main_points", "markdown"}
 
 
 class DocumentCardStore:
@@ -63,7 +69,6 @@ class DocumentCardStore:
         await self.writer.ensure_card_dirs()
 
         for card in cards:
-            await self.writer.write_text(card_md_uri(self.config, card.doc_id), card.markdown)
             await self.writer.write_json(card_json_uri(self.config, card.doc_id), card)
 
         # The manifest is the commit marker. A partial write is never reusable.
@@ -76,7 +81,12 @@ class DocumentCardStore:
             self._fail([f"card manifest is missing: {uri}"])
         try:
             raw = await self.viking_fs.read_file(uri, ctx=self.ctx)
-            return DocumentCardManifest.model_validate_json(raw)
+            payload = json.loads(raw)
+            if isinstance(payload, dict) and payload.get("version") == LEGACY_CARD_MANIFEST_VERSION:
+                for entry in payload.get("entries", []):
+                    if isinstance(entry, dict):
+                        entry.pop("card_markdown_uri", None)
+            return DocumentCardManifest.model_validate(payload)
         except FailedPreconditionError:
             raise
         except Exception as exc:
@@ -90,7 +100,12 @@ class DocumentCardStore:
         resource_uris: list[str],
     ) -> list[DocumentCard]:
         reasons: list[str] = []
-        if manifest.version != CARD_MANIFEST_VERSION:
+        legacy_manifest = (
+            manifest.version == LEGACY_CARD_MANIFEST_VERSION
+            and manifest.prompt_version == LEGACY_DOCUMENT_CARD_PROMPT_VERSION
+            and manifest.schema_hash in LEGACY_DOCUMENT_CARD_SCHEMA_HASHES
+        )
+        if manifest.version != CARD_MANIFEST_VERSION and not legacy_manifest:
             reasons.append(
                 f"manifest version changed: cached={manifest.version} "
                 f"current={CARD_MANIFEST_VERSION}"
@@ -101,9 +116,9 @@ class DocumentCardStore:
                 f"current={self.config.pipeline_version}"
             )
         current_schema_hash = _schema_hash()
-        if manifest.schema_hash != current_schema_hash:
+        if manifest.schema_hash != current_schema_hash and not legacy_manifest:
             reasons.append("DocumentCard schema changed")
-        if manifest.prompt_version != DOCUMENT_CARD_PROMPT_VERSION:
+        if manifest.prompt_version != DOCUMENT_CARD_PROMPT_VERSION and not legacy_manifest:
             reasons.append("document-card prompt version changed")
         if manifest.resource_uris != resource_uris:
             reasons.append("resource roots changed")
@@ -125,24 +140,30 @@ class DocumentCardStore:
                 continue
             if entry.resource_uri != doc.resource_uri or entry.title != doc.title:
                 reasons.append(f"document identity changed: {doc.doc_id}")
-            if entry.prompt_hash != _text_hash(build_document_card_prompt(doc)):
+            if (
+                not legacy_manifest
+                and entry.prompt_hash != _text_hash(build_document_card_prompt(doc))
+            ):
                 reasons.append(f"document-card input or prompt changed: {doc.doc_id}")
             try:
                 raw = await self.viking_fs.read_file(entry.card_json_uri, ctx=self.ctx)
-                card = DocumentCard.model_validate_json(raw)
+                payload = json.loads(raw)
+                if _json_hash(payload) != entry.card_hash:
+                    reasons.append(f"card content hash changed: {doc.doc_id}")
+                if legacy_manifest and isinstance(payload, dict):
+                    payload = dict(payload)
+                    for field in LEGACY_CARD_FIELDS:
+                        payload.pop(field, None)
+                card = DocumentCard.model_validate(payload)
             except Exception as exc:
                 reasons.append(f"card is missing or invalid for {doc.doc_id}: {exc}")
                 continue
-            if _json_hash(card.model_dump(mode="json")) != entry.card_hash:
-                reasons.append(f"card content hash changed: {doc.doc_id}")
             if (
                 card.doc_id != entry.doc_id
                 or card.resource_uri != entry.resource_uri
                 or card.title != entry.title
             ):
                 reasons.append(f"card identity changed: {doc.doc_id}")
-            if not await self.viking_fs.exists(entry.card_markdown_uri, ctx=self.ctx):
-                reasons.append(f"card markdown is missing: {entry.card_markdown_uri}")
             cards.append(card)
 
         if reasons:
@@ -178,7 +199,6 @@ class DocumentCardStore:
                     prompt_hash=_text_hash(build_document_card_prompt(doc)),
                     card_hash=_json_hash(card.model_dump(mode="json")),
                     card_json_uri=card_json_uri(self.config, doc.doc_id),
-                    card_markdown_uri=card_md_uri(self.config, doc.doc_id),
                 )
             )
         return DocumentCardManifest(

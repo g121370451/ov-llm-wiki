@@ -29,7 +29,13 @@ def test_card_and_wiki_stages_keep_separate_metrics(tmp_path):
                 "max_card_input_chars": 20000,
             },
         ),
-        ("build_wiki", {"resource_uris": ["viking://resources/demo"]}),
+        (
+            "build_wiki",
+            {
+                "resource_uris": ["viking://resources/demo"],
+                "node_discovery_backend": "facet_graph",
+            },
+        ),
     ]
 
 
@@ -44,6 +50,25 @@ def test_clear_wiki_preserve_cards_is_forwarded_and_reported(tmp_path):
     assert db.calls == [("clear_wiki", {"preserve_cards": True})]
     assert report["Wiki Cleanup"]["Cards Preserved"] is True
     assert report["Wiki Cleanup"]["Removed Paths"] == ["viking://wiki/nodes/"]
+
+
+def test_build_wiki_forwards_configured_full_context_backend(tmp_path):
+    db = FakeVectorStore()
+    pipeline = _pipeline(tmp_path, db)
+    pipeline.config["execution"]["wiki_node_discovery_backend"] = "llm_full_context"
+    pipeline._write_resource_manifest(["viking://resources/demo"])
+
+    pipeline.run_build_wiki()
+
+    assert db.calls == [
+        (
+            "build_wiki",
+            {
+                "resource_uris": ["viking://resources/demo"],
+                "node_discovery_backend": "llm_full_context",
+            },
+        )
+    ]
 
 
 def test_resource_manifest_is_reused_across_output_directories(tmp_path):

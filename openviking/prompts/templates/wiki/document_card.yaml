@@ -15,9 +15,8 @@ variables:
 template: |
   Generate one Wiki Document Card for the given resource document.
 
-  The input contains content_or_structure and metadata. Use only those fields.
-  Return only the semantic card content: summary, main_points, important_terms, and candidate_topics.
-  Do not return doc_id, resource_uri, title, markdown, node fields, or source assignment fields.
+  Use only content_or_structure as evidence.
+  Return only the semantic card content: summary, important_terms, and candidate_topics.
 
   Input:
   {{ input_json }}

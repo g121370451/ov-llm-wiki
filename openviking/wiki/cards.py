@@ -135,34 +135,4 @@ class DocumentCardGenerator:
                 "title": title,
             }
         )
-        if not card.markdown:
-            card = card.model_copy(update={"markdown": render_card_markdown(card)})
         return card
-
-
-def render_card_markdown(card: DocumentCard) -> str:
-    main_points = "\n".join(f"- {item}" for item in card.main_points)
-    terms = "\n".join(f"- {item}" for item in card.important_terms)
-    topics = "\n".join(f"- {item}" for item in card.candidate_topics)
-    return f"""# Wiki Card: {card.title}
-
-## Source Info
-
-- Source URI: {card.resource_uri}
-
-## Summary
-
-{card.summary}
-
-## Main Points
-
-{main_points}
-
-## Important Terms
-
-{terms}
-
-## Candidate Wiki Topics
-
-{topics}
-"""

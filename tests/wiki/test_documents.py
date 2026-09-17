@@ -9,11 +9,10 @@ from .fakes import FakeVLM
 
 
 @pytest.mark.asyncio
-async def test_node_documents_retries_invalid_markdown_with_same_prompt():
+async def test_node_documents_normalizes_generated_h1_to_canonical_title():
     fake_vlm = FakeVLM(
         [
             {"markdown": "# Wrong Title\n\n## Details\n\nInvalid content."},
-            {"markdown": "# Question Answering\n\n## Details\n\nValid content."},
         ]
     )
     generator = NodeContentGenerator(WikiLLMRunner(fake_vlm))
@@ -39,9 +38,32 @@ async def test_node_documents_retries_invalid_markdown_with_same_prompt():
     )
 
     assert document.title == "Question Answering"
-    assert document.content == "# Question Answering\n\n## Details\n\nValid content."
+    assert document.content == "# Question Answering\n\n## Details\n\nInvalid content."
+    assert len(fake_vlm.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_node_documents_retries_when_generated_markdown_has_no_leading_h1():
+    fake_vlm = FakeVLM(
+        [
+            {"markdown": "## Details\n\nMissing title."},
+            {"markdown": "# Question Answering\n\n## Details\n\nValid content."},
+        ]
+    )
+    generator = NodeContentGenerator(WikiLLMRunner(fake_vlm))
+
+    document = await generator.generate_direct(
+        WikiNode(
+            node_id="question_answering",
+            title="Question Answering",
+            depth=1,
+            scope="QA methods and evaluation.",
+        ),
+        [{"title": "Source", "sections": [{"content": "Evidence."}]}],
+    )
+
+    assert document.content.startswith("# Question Answering\n")
     assert len(fake_vlm.calls) == 2
-    assert fake_vlm.calls[0] == fake_vlm.calls[1]
 
 
 @pytest.mark.asyncio
@@ -104,9 +126,9 @@ async def test_staged_generation_uses_three_source_batches_and_preserves_filled_
         "node_documents_refine",
         "node_documents_refine",
     ]
-    assert all(f"Source {index}" in fake_vlm.calls[1] for index in range(3))
-    assert "Source 3" not in fake_vlm.calls[1]
-    assert "Source 3" in fake_vlm.calls[2]
+    assert all(f"Evidence {index}" in fake_vlm.calls[1] for index in range(3))
+    assert "Evidence 3" not in fake_vlm.calls[1]
+    assert "Evidence 3" in fake_vlm.calls[2]
     assert fake_vlm.calls[2] == fake_vlm.calls[3]
     assert "## Foundations" in document.content
     assert "## Evaluation" in document.content
@@ -150,10 +172,10 @@ async def test_staged_generation_reduces_batch_size_without_splitting_sources():
     outline = await generator.generate_outline(node, [_card(index) for index in range(3)])
     await generator.generate_staged(node, outline, sources)
 
-    assert "Source 0" in fake_vlm.calls[1]
-    assert "Source 1" not in fake_vlm.calls[1]
-    assert "Source 1" in fake_vlm.calls[2]
-    assert "Source 2" in fake_vlm.calls[3]
+    assert "uri-0" not in fake_vlm.calls[1]
+    assert fake_vlm.calls[1].count("x" * 1000) == 2
+    assert fake_vlm.calls[2].count("x" * 1000) == 1
+    assert len(fake_vlm.calls) == 3
 
 
 def _card(index: int) -> DocumentCard:
@@ -162,7 +184,6 @@ def _card(index: int) -> DocumentCard:
         resource_uri=f"viking://resources/doc_{index}/",
         title=f"Source {index}",
         summary="Summary",
-        main_points=["Point"],
         candidate_topics=["Topic"],
     )
 

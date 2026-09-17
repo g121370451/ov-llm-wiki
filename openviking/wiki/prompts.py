@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 
 from openviking.prompts.manager import PromptManager
 
 from .schemas import (
     DocumentCard,
+    DocumentFacetSet,
     GeneratedNodeContext,
     NodeDocument,
     ResourceDocument,
@@ -15,19 +17,40 @@ from .schemas import (
 )
 
 _PROMPT_MANAGER = PromptManager()
+_OPAQUE_TITLE_PREFIX_RE = re.compile(
+    r"^(?:dsid_[0-9a-f]{32}|s2_[0-9a-f]{40}|title_[0-9a-f]{20})(?:__)?",
+    re.IGNORECASE,
+)
 
 
 def build_document_card_prompt(doc: ResourceDocument) -> str:
-    metadata = {
-        key: value
-        for key, value in (doc.metadata or {}).items()
-        if key in {"card_input_mode", "missing_summary_uris"}
-    }
-    payload = {
-        "content_or_structure": doc.content_or_structure,
-        "metadata": metadata,
-    }
+    payload = {"content_or_structure": doc.content_or_structure}
     return _render_wiki_prompt("wiki.document_card", payload)
+
+
+def build_document_facets_prompt(
+    doc: ResourceDocument,
+    sections: list[dict[str, str]],
+) -> str:
+    payload = {"source_sections": sections}
+    if title := _semantic_title(doc.title, source_id=doc.doc_id):
+        payload["document_title"] = title
+    return _render_wiki_prompt("wiki.document_facets", payload)
+
+
+def build_facet_community_prompt(
+    facet_sets: list[DocumentFacetSet],
+    facet_ids: list[str],
+) -> str:
+    wanted = set(facet_ids)
+    facet_texts = [
+        facet.facet_text
+        for facet_set in facet_sets
+        for facet in facet_set.topic_facets
+        if facet.facet_id in wanted
+    ]
+    payload = {"facet_texts": list(dict.fromkeys(facet_texts))}
+    return _render_wiki_prompt("wiki.facet_community", payload)
 
 
 def build_node_discovery_prompt(
@@ -38,8 +61,6 @@ def build_node_discovery_prompt(
     if source_ids is not None and len(source_ids) != len(cards):
         raise ValueError("source_ids must have the same length as cards")
     inputs = {
-        "source_unit_count": len(cards),
-        "min_sources_per_node": min_sources_per_node,
         "source_records": [
             _source_card_payload(
                 card,
@@ -58,7 +79,7 @@ def build_node_discovery_prompt(
 def build_node_card_prompt(node: WikiNode, document: NodeDocument) -> str:
     inputs = {
         "node": node.model_dump(include={"title", "scope"}, mode="json"),
-        "document": document.model_dump(include={"title", "content"}, mode="json"),
+        "document_content": document.content,
     }
     return _render_wiki_prompt("wiki.node_card", inputs)
 
@@ -72,8 +93,8 @@ def build_node_documents_prompt(
     inputs = {
         "node": node.model_dump(include={"title", "scope"}, mode="json"),
         "source_documents": [
-            _source_document_payload(source_document, index=index)
-            for index, source_document in enumerate(source_documents, start=1)
+            _source_document_payload(source_document)
+            for source_document in source_documents
         ],
     }
     return _render_wiki_prompt(
@@ -85,10 +106,7 @@ def build_node_document_outline_prompt(node: WikiNode, source_cards: list[Docume
     inputs = {
         "node": node.model_dump(include={"title", "scope"}, mode="json"),
         "source_cards": [
-            card.model_dump(
-                include={"title", "summary", "main_points", "candidate_topics"},
-                mode="json",
-            )
+            _source_card_semantic_payload(card)
             for card in source_cards
         ],
     }
@@ -107,8 +125,8 @@ def build_node_document_refine_prompt(
         "node": node.model_dump(include={"title", "scope"}, mode="json"),
         "current_markdown": current_markdown,
         "new_source_documents": [
-            _source_document_payload(source_document, index=index)
-            for index, source_document in enumerate(source_documents, start=1)
+            _source_document_payload(source_document)
+            for source_document in source_documents
         ],
     }
     return _render_wiki_prompt(
@@ -137,38 +155,56 @@ def _child_node_payload(context: GeneratedNodeContext) -> dict:
     return {
         "node": context.node.model_dump(include={"title", "scope"}, mode="json"),
         "card": context.card.model_dump(
-            include={"summary", "main_points", "important_terms", "candidate_topics"},
+            include={"summary", "important_terms", "candidate_topics"},
             mode="json",
         ),
-        "document": context.document.model_dump(include={"title", "content"}, mode="json"),
-        "source_count": len(context.source_refs),
     }
 
 
 def _source_document_payload(
     source_document: dict,
-    *,
-    index: int,
 ) -> dict:
     sections = [
         {"content": str(section.get("content") or "")}
         for section in source_document.get("sections", [])
         if str(section.get("content") or "")
     ]
-    return {
-        "source_id": f"S{index:04d}",
-        "title": str(source_document.get("title") or ""),
-        "sections": sections,
-    }
+    payload = {"sections": sections}
+    title = _semantic_title(
+        str(source_document.get("title") or ""),
+        source_id=str(source_document.get("source_id") or ""),
+    )
+    if title:
+        payload["title"] = title
+    return payload
 
 
 def _source_card_payload(card: DocumentCard, *, source_id: str) -> dict:
-    return {
+    payload = {
         "source_id": source_id,
-        "title": card.title,
         "summary": card.summary,
         "candidate_topics": card.candidate_topics,
     }
+    if title := _semantic_title(card.title, source_id=card.doc_id):
+        payload["title"] = title
+    return payload
+
+
+def _source_card_semantic_payload(card: DocumentCard) -> dict:
+    payload = {
+        "summary": card.summary,
+        "candidate_topics": card.candidate_topics,
+    }
+    if title := _semantic_title(card.title, source_id=card.doc_id):
+        payload["title"] = title
+    return payload
+
+
+def _semantic_title(title: str, *, source_id: str) -> str:
+    normalized = title.strip()
+    if not normalized or normalized == source_id:
+        return ""
+    return _OPAQUE_TITLE_PREFIX_RE.sub("", normalized).lstrip("_- " )
 
 
 def _render_wiki_prompt(prompt_id: str, payload: object, **extra_vars: object) -> str:

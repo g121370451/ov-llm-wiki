@@ -43,6 +43,23 @@ class NodeSourceSelector:
                 raise RuntimeError(
                     f"node source ref has no loaded source document: {source_ref.doc_id}"
                 )
+            if source_ref.matched_source_refs:
+                sections_by_uri = {
+                    section.section_uri: section
+                    for section in source_document.source_sections
+                }
+                sections = [
+                    sections_by_uri[uri]
+                    for uri in source_ref.matched_source_refs
+                    if uri in sections_by_uri
+                ]
+                if sections:
+                    return SelectedSourceDocument(
+                        source_id=source_ref.doc_id,
+                        title=source_ref.title,
+                        sections=sections,
+                        relevance_score=1.0,
+                    )
             query = "\n".join([node.title, node.scope, *dict.fromkeys(source_ref.matched_topics)])
             try:
                 async with semaphore:
