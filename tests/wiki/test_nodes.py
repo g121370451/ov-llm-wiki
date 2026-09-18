@@ -160,7 +160,7 @@ async def test_node_discovery_retries_invalid_json_result_with_same_prompt():
 
 
 @pytest.mark.asyncio
-async def test_parent_node_discovery_allows_duplicate_child_parent_assignment():
+async def test_parent_node_discovery_allows_partially_overlapping_parent_assignment():
     fake_vlm = FakeVLM(
         [
             {
@@ -194,6 +194,46 @@ async def test_parent_node_discovery_allows_duplicate_child_parent_assignment():
     assert len(fake_vlm.calls) == 1
 
 
+@pytest.mark.asyncio
+async def test_node_discovery_maps_short_prompt_aliases_back_to_full_source_ids():
+    cards = [
+        _node_card(
+            f"dsid_{index:032x}__in_{index:08x}",
+            f"Long source {index}",
+            resource_uri=f"viking://resources/long/{index}",
+        )
+        for index in range(1, 4)
+    ]
+    fake_vlm = FakeVLM(
+        [
+            {
+                "nodes": [
+                    {
+                        "title": "Reliability standards",
+                        "scope": "Reliability standards and ownership.",
+                        "supporting_source_ids": ["S0001", "S0002", "S0003"],
+                        "merged_candidate_topics": ["Reliability"],
+                    }
+                ],
+                "unassigned_source_ids": [],
+            }
+        ]
+    )
+    runner = NodeDiscoveryRunner(WikiLLMRunner(fake_vlm), WikiConfig())
+
+    result = await runner.discover_layer(
+        cards,
+        depth=1,
+        min_sources_per_node=3,
+    )
+
+    assert result.source_assignments.assignments[0].source_ids == [
+        card.doc_id for card in cards
+    ]
+    assert '"source_id": "S0001"' in fake_vlm.calls[0]
+    assert cards[0].doc_id not in fake_vlm.calls[0]
+
+
 def _node(title: str) -> dict:
     return {
         "title": title,
@@ -212,12 +252,16 @@ def _parent_node(title: str, child_node_ids: list[str]) -> dict:
     }
 
 
-def _node_card(node_id: str, title: str) -> DocumentCard:
+def _node_card(
+    node_id: str,
+    title: str,
+    *,
+    resource_uri: str | None = None,
+) -> DocumentCard:
     return DocumentCard(
         doc_id=node_id,
-        resource_uri=f"viking://wiki/nodes/{node_id}/",
+        resource_uri=resource_uri or f"viking://wiki/nodes/{node_id}/",
         title=title,
         summary=f"{title} summary.",
-        main_points=[f"{title} point."],
         candidate_topics=[title],
     )

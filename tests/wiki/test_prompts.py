@@ -3,14 +3,24 @@ import pytest
 from openviking.prompts.manager import PromptManager
 from openviking.wiki.prompts import (
     build_document_card_prompt,
+    build_document_facets_prompt,
+    build_facet_community_prompt,
+    build_next_layer_decision_prompt,
     build_node_card_prompt,
     build_node_discovery_prompt,
+    build_node_document_outline_prompt,
+    build_node_document_refine_prompt,
     build_node_documents_prompt,
 )
 from openviking.wiki.schemas import (
     DocumentCard,
+    DocumentFacetSet,
+    GeneratedNodeContext,
     NodeDocument,
     ResourceDocument,
+    SourceRef,
+    SourceSection,
+    TopicFacet,
     WikiNode,
 )
 
@@ -24,6 +34,8 @@ from .test_pipeline_order import _card_response
         ("wiki.node_discovery", {}),
         ("wiki.node_card", {}),
         ("wiki.node_documents", {}),
+        ("wiki.node_document_outline", {}),
+        ("wiki.node_document_refine", {"phase": "initial"}),
         ("wiki.next_layer_decision", {"min_child_nodes_per_parent": 3}),
     ],
 )
@@ -64,13 +76,69 @@ def test_document_card_prompt_uses_only_semantic_input_fields():
     )
 
     assert '"content_or_structure": "semantic content"' in prompt
-    assert '"card_input_mode": "summary"' in prompt
-    assert "missing_summary_uris" in prompt
+    assert "card_input_mode" not in prompt
+    assert "missing_summary_uris" not in prompt
     assert "paper_1" not in prompt
     assert "Paper 1" not in prompt
     assert '"doc_id"' not in prompt
     assert '"source_type"' not in prompt
     assert "root_uri" not in prompt
+
+
+def test_facet_prompts_keep_only_semantic_text_and_required_short_refs():
+    document = ResourceDocument(
+        doc_id="opaque_document_id",
+        resource_uri="viking://resources/opaque_document_id",
+        title="Backup Guide",
+        source_sections=[
+            SourceSection(
+                section_uri="viking://resources/opaque_document_id/section",
+                content="Evidence.",
+            )
+        ],
+    )
+    extraction = build_document_facets_prompt(
+        document,
+        [{"section_uri": "S0001", "content": "Evidence."}]
+    )
+    community = build_facet_community_prompt(
+        [
+            DocumentFacetSet(
+                doc_id="opaque_document_id",
+                topic_facets=[
+                    TopicFacet(
+                        facet_id="opaque_facet_id",
+                        facet_text="Database backup and recovery.",
+                        source_refs=["viking://resources/opaque_document_id/section"],
+                    )
+                ],
+            )
+        ],
+        ["opaque_facet_id"],
+    )
+
+    assert '"section_uri": "S0001"' in extraction
+    assert '"document_title": "Backup Guide"' in extraction
+    assert "opaque_document_id" not in extraction
+    assert "opaque_uri" not in extraction
+    assert "Database backup and recovery." in community
+    assert "opaque_document_id" not in community
+    assert "opaque_facet_id" not in community
+    assert "opaque_uri" not in community
+
+
+def test_facet_community_prompt_deduplicates_identical_semantic_text():
+    facet_set = DocumentFacetSet(
+        doc_id="doc",
+        topic_facets=[
+            TopicFacet(facet_id="doc:a", facet_text="Same topic."),
+            TopicFacet(facet_id="doc:b", facet_text="Same topic."),
+        ],
+    )
+
+    prompt = build_facet_community_prompt([facet_set], ["doc:a", "doc:b"])
+
+    assert prompt.count('    "Same topic."') == 1
 
 
 def test_node_discovery_prompt_uses_only_card_index_fields():
@@ -81,13 +149,65 @@ def test_node_discovery_prompt_uses_only_card_index_fields():
 
     assert '"summary"' in prompt
     assert '"candidate_topics"' in prompt
+    assert '"title": "Paper 1"' in prompt
     assert '"source_id": "OARW_1"' in prompt
     assert "at least 3 distinct source cards" in prompt
-    assert '"min_sources_per_node": 3' in prompt
     assert "at least min_sources_per_node distinct source cards" not in prompt
-    assert '"source_unit_count": 1' in prompt
+    assert '"min_sources_per_node"' not in prompt
+    assert '"source_unit_count"' not in prompt
     assert '"main_points"' not in prompt
     assert "viking://resources/" not in prompt
+
+
+def test_node_discovery_prompt_rejects_duplicate_supporting_source_sets():
+    prompt = build_node_discovery_prompt(
+        [DocumentCard.model_validate(_card_response(1))],
+        min_sources_per_node=3,
+    )
+
+    assert "Do not return multiple nodes with the exact same supporting_source_ids" in prompt
+
+
+def test_node_discovery_prompt_can_use_short_source_aliases():
+    card = DocumentCard.model_validate(_card_response(1))
+
+    prompt = build_node_discovery_prompt(
+        [card],
+        min_sources_per_node=1,
+        source_ids=["S0001"],
+    )
+
+    assert '"source_id": "S0001"' in prompt
+    assert card.doc_id not in prompt
+
+
+def test_prompt_titles_drop_opaque_prefix_but_keep_semantic_suffix():
+    card = DocumentCard(
+        doc_id="dsid_8f6063b780784a139de5c4d5afa49eb2__he_d159cb8b",
+        resource_uri="viking://resources/doc",
+        title=(
+            "dsid_8f6063b780784a139de5c4d5afa49eb2__"
+            "helixcare-case-study-q4-2025"
+        ),
+        summary="Customer story.",
+        candidate_topics=["Case studies"],
+    )
+
+    prompt = build_node_discovery_prompt(
+        [card], min_sources_per_node=1, source_ids=["S0001"]
+    )
+
+    assert '"title": "helixcare-case-study-q4-2025"' in prompt
+    assert "dsid_8f6063b780784a139de5c4d5afa49eb2" not in prompt
+
+
+def test_node_discovery_prompt_rejects_mismatched_source_aliases():
+    with pytest.raises(ValueError, match="same length"):
+        build_node_discovery_prompt(
+            [DocumentCard.model_validate(_card_response(1))],
+            min_sources_per_node=1,
+            source_ids=[],
+        )
 
 
 def test_node_documents_prompt_uses_only_node_boundary_and_source_sections():
@@ -114,8 +234,11 @@ def test_node_documents_prompt_uses_only_node_boundary_and_source_sections():
     assert '"title": "Question Answering"' in prompt
     assert '"scope": "QA methods and evaluation."' in prompt
     assert '"source_documents"' in prompt
-    assert '"source_id": "OARW_1"' in prompt
-    assert '"section_uri": "viking://resources/OARW_1/abstract"' in prompt
+    assert '"source_id"' not in prompt
+    assert '"title": ""' not in prompt
+    assert "OARW_1" not in prompt
+    assert "section_uri" not in prompt
+    assert "viking://resources/OARW_1/abstract" not in prompt
     assert "Question answering evidence." in prompt
     assert '"node_id"' not in prompt
     assert '"depth"' not in prompt
@@ -128,6 +251,42 @@ def test_node_documents_prompt_uses_only_node_boundary_and_source_sections():
     assert "not a sequence of per-source summaries" in prompt
 
 
+def test_outline_and_refine_prompts_expose_only_defined_fields():
+    node = WikiNode(
+        node_id="question_answering",
+        title="Question Answering",
+        depth=1,
+        scope="QA methods and evaluation.",
+    )
+    card = DocumentCard.model_validate(_card_response(1))
+
+    outline = build_node_document_outline_prompt(node, [card])
+    refine = build_node_document_refine_prompt(
+        node,
+        "# Question Answering\n\n## Methods",
+        [
+            {
+                "source_id": "opaque",
+                "title": "Paper 1",
+                "sections": [{"section_uri": "secret", "content": "Evidence."}],
+            }
+        ],
+        initial=True,
+    )
+
+    assert '"main_points"' not in outline
+    assert '"candidate_topics"' in outline
+    assert '"title": "Paper 1"' in outline
+    assert "important_terms" not in outline
+    assert "resource_uri" not in outline
+    assert '"current_markdown"' in refine
+    assert '"source_id"' not in refine
+    assert '"title": "Paper 1"' in refine
+    assert "opaque" not in refine
+    assert "section_uri" not in refine
+    assert "secret" not in refine
+
+
 def test_node_card_prompt_uses_node_boundary_and_generated_documents():
     prompt = build_node_card_prompt(
         WikiNode(
@@ -136,22 +295,65 @@ def test_node_card_prompt_uses_node_boundary_and_generated_documents():
             depth=2,
             scope="QA methods and evaluation.",
         ),
-        [
-            NodeDocument(
-                document_id="0001",
-                title="Retrieval QA",
-                content="Retrieval child document.",
-            )
-        ],
+        NodeDocument(
+            title="Retrieval QA",
+            content="Retrieval child document.",
+        ),
     )
 
     assert '"title": "Question Answering"' in prompt
     assert '"scope": "QA methods and evaluation."' in prompt
-    assert '"title": "Retrieval QA"' in prompt
+    assert '"title": "Retrieval QA"' not in prompt
     assert "Retrieval child document." in prompt
     assert '"node_id"' not in prompt
     assert '"document_id"' not in prompt
     assert '"source_refs"' not in prompt
-    assert "Do not return doc_id, resource_uri, title, markdown, node fields" in prompt
     assert "summary: describe the synthesized knowledge" in prompt
     assert "candidate_topics: list broader parent-level topics" in prompt
+
+
+def test_next_layer_decision_prompt_omits_persistent_ids_and_source_refs():
+    opaque_id = "dsid_5217b3a64c4a433c89ba2a3186dea82a"
+    node = WikiNode(
+        node_id=opaque_id,
+        title="Reliability Standards",
+        depth=1,
+        scope="Incident ownership and remediation standards.",
+        child_node_ids=["child_opaque_id"],
+    )
+    context = GeneratedNodeContext(
+        node=node,
+        card=DocumentCard(
+            doc_id=opaque_id,
+            resource_uri=f"viking://wiki/nodes/{opaque_id}/",
+            title=node.title,
+            summary="Reliability standards summary.",
+            candidate_topics=["Operational governance"],
+        ),
+        document=NodeDocument(
+            title="Reliability Synthesis",
+            content="Synthesized reliability knowledge.",
+        ),
+        source_refs=[
+            SourceRef(
+                ref_id="source_opaque_id",
+                doc_id="source_opaque_id",
+                resource_uri="viking://resources/source_opaque_id",
+                card_uri="viking://wiki/cards/source_opaque_id.card.json",
+                title="Source",
+                support_scope="Supports reliability standards.",
+            )
+        ],
+    )
+
+    prompt = build_next_layer_decision_prompt([context])
+
+    assert '"source_count"' not in prompt
+    assert '"title": "Reliability Standards"' in prompt
+    assert opaque_id not in prompt
+    assert "source_opaque_id" not in prompt
+    assert "resource_uri" not in prompt
+    assert "document_id" not in prompt
+    assert "source_refs" not in prompt
+    assert "child_node_ids" not in prompt
+    assert "Synthesized reliability knowledge." not in prompt

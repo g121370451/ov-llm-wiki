@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from pydantic import ValidationError
 
@@ -28,10 +29,35 @@ class DocumentCardGenerator:
     async def generate(self, docs: list[ResourceDocument]) -> list[DocumentCard]:
         sem = asyncio.Semaphore(self.max_concurrent)
         cards: list[DocumentCard | None] = [None] * len(docs)
+        progress_lock = asyncio.Lock()
+        completed = 0
+        total = len(docs)
+        started_at = time.monotonic()
+        progress_log_every = max(10, total // 10)
+
+        logger.info(
+            "[Wiki] Document card generation started: total=%d max_concurrent=%d",
+            total,
+            self.max_concurrent,
+        )
 
         async def _generate_card_at_index(index: int, doc: ResourceDocument) -> None:
+            nonlocal completed
             async with sem:
                 cards[index] = await self._generate_card(doc)
+                async with progress_lock:
+                    completed += 1
+                    should_log_progress = completed == total or completed % progress_log_every == 0
+                    if should_log_progress:
+                        elapsed = time.monotonic() - started_at
+                        logger.info(
+                            "[Wiki] Document card progress: %d/%d (%.1f%%) elapsed=%.1fs latest_doc_id=%s",
+                            completed,
+                            total,
+                            completed * 100 / total if total else 100.0,
+                            elapsed,
+                            doc.doc_id,
+                        )
 
         await asyncio.gather(
             *[_generate_card_at_index(index, doc) for index, doc in enumerate(docs)]
@@ -54,11 +80,11 @@ class DocumentCardGenerator:
     async def generate_node_card(
         self,
         node: WikiNode,
-        documents: list[NodeDocument],
+        document: NodeDocument,
         *,
         resource_uri: str,
     ) -> DocumentCard:
-        prompt = build_node_card_prompt(node, documents)
+        prompt = build_node_card_prompt(node, document)
         return await self._generate_card_from_prompt(
             prompt=prompt,
             step="node_card",
@@ -109,34 +135,4 @@ class DocumentCardGenerator:
                 "title": title,
             }
         )
-        if not card.markdown:
-            card = card.model_copy(update={"markdown": render_card_markdown(card)})
         return card
-
-
-def render_card_markdown(card: DocumentCard) -> str:
-    main_points = "\n".join(f"- {item}" for item in card.main_points)
-    terms = "\n".join(f"- {item}" for item in card.important_terms)
-    topics = "\n".join(f"- {item}" for item in card.candidate_topics)
-    return f"""# Wiki Card: {card.title}
-
-## Source Info
-
-- Source URI: {card.resource_uri}
-
-## Summary
-
-{card.summary}
-
-## Main Points
-
-{main_points}
-
-## Important Terms
-
-{terms}
-
-## Candidate Wiki Topics
-
-{topics}
-"""

@@ -881,7 +881,7 @@ async def context_tree(uri: str) -> str:
 
     The tree starts from the nearest directory-level parents of the input URI and expands downward: resource paths inside a document resolve to their direct parent resource directory; resource document roots resolve to Wiki nodes directly assigned that document; Wiki nodes resolve to their direct parent Wiki nodes, or themselves if they have no parent. The returned tree is complete below those roots and is not clipped to only the input path.
 
-    Refs: [N:<node_id>] is viking://wiki/nodes/<node_id>; [N:<node_id>:card] is viking://wiki/nodes/<node_id>/card.md; [D:<doc_id>] is resolved by the result's Document URI map. Resource directory/file URIs are formed by appending the tree path under [D:<doc_id>] to that document URI.
+    Refs: [N:<node_id>] is viking://wiki/nodes/<node_id>; [N:<node_id>:card] is viking://wiki/nodes/<node_id>/card.json; [D:<doc_id>] is resolved by the result's Document URI map. Resource directory/file URIs are formed by appending the tree path under [D:<doc_id>] to that document URI.
     """
     service = get_service()
     result = await service.fs.context_tree(uri, ctx=_get_ctx())

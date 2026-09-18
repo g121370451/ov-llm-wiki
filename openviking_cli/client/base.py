@@ -54,17 +54,29 @@ class BaseClient(ABC):
         self,
         resource_uris: List[str],
         wiki_root_uri: str = "viking://wiki/",
-        card_input_mode: str = "summary",
-        max_card_input_chars: int = 20000,
+        node_discovery_backend: str = "facet_graph",
         telemetry: TelemetryRequest = False,
     ) -> Dict[str, Any]:
         """Build Wiki from existing resources."""
         ...
 
     @abstractmethod
+    async def build_wiki_cards(
+        self,
+        resource_uris: List[str],
+        wiki_root_uri: str = "viking://wiki/",
+        card_input_mode: str = "summary",
+        max_card_input_chars: int = 20000,
+        telemetry: TelemetryRequest = False,
+    ) -> Dict[str, Any]:
+        """Build reusable Document Cards from existing resources."""
+        ...
+
+    @abstractmethod
     async def clear_wiki(
         self,
         wiki_root_uri: str = "viking://wiki/",
+        preserve_cards: bool = False,
         telemetry: TelemetryRequest = False,
     ) -> Dict[str, Any]:
         """Clear generated Wiki assets."""

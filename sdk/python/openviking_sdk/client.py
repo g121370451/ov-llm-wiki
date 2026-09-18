@@ -564,6 +564,7 @@ class AsyncHTTPClient:
             ResourceExhaustedError,
             AbortedError,
             UnimplementedError,
+            ProcessingError,
         ):
             raise exc_class(message, details=details)
         if exc_class == InvalidURIError:
@@ -947,6 +948,52 @@ class AsyncHTTPClient:
             )
         return self._handle_response(response)
 
+    async def build_wiki_cards(
+        self,
+        resource_uris: List[str],
+        wiki_root_uri: str = "viking://wiki/",
+        card_input_mode: str = "summary",
+        max_card_input_chars: int = 20000,
+        telemetry: Any = False,
+    ) -> Dict[str, Any]:
+        payload = {
+            "resource_uris": resource_uris,
+            "wiki_root_uri": wiki_root_uri,
+            "card_input_mode": card_input_mode,
+            "max_card_input_chars": max_card_input_chars,
+            "telemetry": telemetry,
+        }
+        response = await self._request("POST", "/api/v1/wiki/cards/build", json=payload)
+        return self._handle_response_data(response).get("result", {})
+
+    async def build_wiki(
+        self,
+        resource_uris: List[str],
+        wiki_root_uri: str = "viking://wiki/",
+        telemetry: Any = False,
+    ) -> Dict[str, Any]:
+        payload = {
+            "resource_uris": resource_uris,
+            "wiki_root_uri": wiki_root_uri,
+            "telemetry": telemetry,
+        }
+        response = await self._request("POST", "/api/v1/wiki/build", json=payload)
+        return self._handle_response_data(response).get("result", {})
+
+    async def clear_wiki(
+        self,
+        wiki_root_uri: str = "viking://wiki/",
+        preserve_cards: bool = False,
+        telemetry: Any = False,
+    ) -> Dict[str, Any]:
+        payload = {
+            "wiki_root_uri": wiki_root_uri,
+            "preserve_cards": preserve_cards,
+            "telemetry": telemetry,
+        }
+        response = await self._request("POST", "/api/v1/wiki/clear", json=payload)
+        return self._handle_response_data(response).get("result", {})
+
     async def wait_processed(self, timeout: Optional[float] = None) -> Dict[str, Any]:
         http_timeout = timeout if timeout else 600.0
         response = await self._request(
@@ -1124,6 +1171,7 @@ class AsyncHTTPClient:
         context_type: Optional[Any] = None,
         tags: Optional[List[str]] = None,
         telemetry: Any = False,
+        level: Optional[List[int]] = None,
         image: Any = None,
     ) -> Dict[str, Any]:
         actual_limit = node_limit if node_limit is not None else limit
@@ -1137,6 +1185,7 @@ class AsyncHTTPClient:
             "context_type": self._normalize_context_type(context_type),
             "tags": tags,
             "telemetry": telemetry,
+            "level": level,
         }
         payload = self._compact_request_body(payload)
         response = await self._request("POST", "/api/v1/search/find", json=payload)
@@ -1155,6 +1204,7 @@ class AsyncHTTPClient:
         context_type: Optional[Any] = None,
         tags: Optional[List[str]] = None,
         telemetry: Any = False,
+        level: Optional[List[int]] = None,
         image: Any = None,
     ) -> Dict[str, Any]:
         actual_limit = node_limit if node_limit is not None else limit
@@ -1170,6 +1220,7 @@ class AsyncHTTPClient:
             "context_type": self._normalize_context_type(context_type),
             "tags": tags,
             "telemetry": telemetry,
+            "level": level,
         }
         payload = self._compact_request_body(payload)
         response = await self._request("POST", "/api/v1/search/search", json=payload)
@@ -1982,6 +2033,52 @@ class SyncHTTPClient:
     ) -> Dict[str, Any]:
         return run_async(self._async_client.trigger_watch(task_id, to_uri=to_uri))
 
+    def build_wiki_cards(
+        self,
+        resource_uris: List[str],
+        wiki_root_uri: str = "viking://wiki/",
+        card_input_mode: str = "summary",
+        max_card_input_chars: int = 20000,
+        telemetry: Any = False,
+    ) -> Dict[str, Any]:
+        return run_async(
+            self._async_client.build_wiki_cards(
+                resource_uris=resource_uris,
+                wiki_root_uri=wiki_root_uri,
+                card_input_mode=card_input_mode,
+                max_card_input_chars=max_card_input_chars,
+                telemetry=telemetry,
+            )
+        )
+
+    def build_wiki(
+        self,
+        resource_uris: List[str],
+        wiki_root_uri: str = "viking://wiki/",
+        telemetry: Any = False,
+    ) -> Dict[str, Any]:
+        return run_async(
+            self._async_client.build_wiki(
+                resource_uris=resource_uris,
+                wiki_root_uri=wiki_root_uri,
+                telemetry=telemetry,
+            )
+        )
+
+    def clear_wiki(
+        self,
+        wiki_root_uri: str = "viking://wiki/",
+        preserve_cards: bool = False,
+        telemetry: Any = False,
+    ) -> Dict[str, Any]:
+        return run_async(
+            self._async_client.clear_wiki(
+                wiki_root_uri=wiki_root_uri,
+                preserve_cards=preserve_cards,
+                telemetry=telemetry,
+            )
+        )
+
     def wait_processed(self, timeout: Optional[float] = None) -> Dict[str, Any]:
         return run_async(self._async_client.wait_processed(timeout))
 
@@ -2108,6 +2205,7 @@ class SyncHTTPClient:
         context_type: Optional[Any] = None,
         tags: Optional[List[str]] = None,
         telemetry: Any = False,
+        level: Optional[List[int]] = None,
         image: Any = None,
     ) -> Dict[str, Any]:
         return run_async(
@@ -2121,6 +2219,7 @@ class SyncHTTPClient:
                 context_type=context_type,
                 tags=tags,
                 telemetry=telemetry,
+                level=level,
                 image=image,
             )
         )
@@ -2138,6 +2237,7 @@ class SyncHTTPClient:
         context_type: Optional[Any] = None,
         tags: Optional[List[str]] = None,
         telemetry: Any = False,
+        level: Optional[List[int]] = None,
         image: Any = None,
     ) -> Dict[str, Any]:
         actual_session_id = session_id
@@ -2155,6 +2255,7 @@ class SyncHTTPClient:
                 context_type=context_type,
                 tags=tags,
                 telemetry=telemetry,
+                level=level,
                 image=image,
             )
         )

@@ -1,0 +1,28 @@
+metadata:
+  id: "wiki.facet_community"
+  name: "Wiki Facet Community"
+  description: "Name one mature facet community and define its boundary"
+  version: "1.0.0"
+  language: "en"
+  category: "wiki"
+
+variables:
+  - name: "input_json"
+    type: "string"
+    description: "JSON encoded facet texts in one discovered community"
+    required: true
+
+template: |
+  Name this facet community as one reusable Wiki node and define its scope.
+
+  Rules:
+  - Return only title and scope.
+  - The title must identify the shared topic supported by the facets.
+  - The scope must state what belongs in the node and clarify important nearby topics that do not.
+  - Do not broaden the node beyond the supplied facets.
+
+  Input:
+  {{ input_json }}
+
+llm_config:
+  temperature: 0.0

@@ -1,7 +1,9 @@
 from openviking.wiki.config import WikiConfig
 from openviking.wiki.uri import (
+    clustering_run_uri,
     node_card_json_uri,
-    node_card_md_uri,
+    node_document_uri,
+    node_facets_json_uri,
     node_root_uri,
     sanitize_node_id,
     wiki_root,
@@ -18,11 +20,17 @@ def test_node_uri_has_no_corpus_id_layer():
 def test_node_card_uris_live_under_node_root():
     config = WikiConfig()
 
-    assert node_card_md_uri(config, "question_answering") == (
-        "viking://wiki/nodes/question_answering/card.md"
-    )
     assert node_card_json_uri(config, "question_answering") == (
         "viking://wiki/nodes/question_answering/card.json"
+    )
+    assert node_document_uri(config, "question_answering") == (
+        "viking://wiki/nodes/question_answering/documents/document.md"
+    )
+    assert node_facets_json_uri(config, "question_answering") == (
+        "viking://wiki/facets/nodes/question_answering.facets.json"
+    )
+    assert clustering_run_uri(config, 2) == (
+        "viking://wiki/clustering/runs/depth_0002.json"
     )
 
 

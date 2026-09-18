@@ -15,7 +15,6 @@ def test_document_card_requires_candidate_topics():
             resource_uri="viking://resources/OARW_1/",
             title="Title",
             summary="Summary",
-            main_points=["Point"],
             candidate_topics=[],
         )
 
@@ -26,7 +25,6 @@ def test_document_card_allows_wiki_node_uri():
         resource_uri="viking://wiki/nodes/question_answering/",
         title="Question Answering",
         summary="Summary",
-        main_points=["Point"],
         candidate_topics=["Parent topic"],
     )
 

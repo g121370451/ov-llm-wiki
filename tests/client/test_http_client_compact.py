@@ -82,6 +82,34 @@ async def test_find_keeps_explicit_tags():
     assert payload["tags"] == ["a", "b"]
 
 
+async def test_wiki_http_requests_keep_card_and_discovery_inputs_separate():
+    client, fake = _client_with_fake()
+
+    await client.build_wiki_cards(
+        ["viking://resources/demo"],
+        card_input_mode="raw_chunk",
+        max_card_input_chars=1234,
+    )
+    card_call = fake.calls[-1]
+    assert card_call["path"] == "/api/v1/wiki/cards/build"
+    assert card_call["json"]["card_input_mode"] == "raw_chunk"
+    assert card_call["json"]["max_card_input_chars"] == 1234
+
+    await client.build_wiki(
+        ["viking://resources/demo"],
+        node_discovery_backend="facet_graph",
+    )
+    wiki_call = fake.calls[-1]
+    assert wiki_call["path"] == "/api/v1/wiki/build"
+    assert wiki_call["json"]["node_discovery_backend"] == "facet_graph"
+    assert "card_input_mode" not in wiki_call["json"]
+    assert "max_card_input_chars" not in wiki_call["json"]
+
+    await client.clear_wiki(preserve_cards=True)
+    clear_call = fake.calls[-1]
+    assert clear_call["path"] == "/api/v1/wiki/clear"
+    assert clear_call["json"]["preserve_cards"] is True
+
 async def test_search_omits_unset_optional_fields():
     client, fake = _client_with_fake()
 

@@ -24,6 +24,15 @@ class BuildWikiRequest(BaseModel):
 
     resource_uris: list[str] = Field(min_length=1)
     wiki_root_uri: str = "viking://wiki/"
+    node_discovery_backend: Literal["llm_full_context", "facet_graph"] = "facet_graph"
+    telemetry: TelemetryRequest = False
+
+
+class BuildWikiCardsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resource_uris: list[str] = Field(min_length=1)
+    wiki_root_uri: str = "viking://wiki/"
     card_input_mode: Literal["summary", "raw_chunk"] = "summary"
     max_card_input_chars: int = 20000
     telemetry: TelemetryRequest = False
@@ -33,7 +42,32 @@ class ClearWikiRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     wiki_root_uri: str = "viking://wiki/"
+    preserve_cards: bool = False
     telemetry: TelemetryRequest = False
+
+
+@router.post("/wiki/cards/build")
+async def build_wiki_cards(
+    request: BuildWikiCardsRequest,
+    _ctx: RequestContext = Depends(get_request_context),
+):
+    service = get_service()
+
+    async def _build() -> dict:
+        return await service.wiki.build_wiki_cards(
+            resource_uris=request.resource_uris,
+            ctx=_ctx,
+            wiki_root_uri=request.wiki_root_uri,
+            card_input_mode=request.card_input_mode,
+            max_card_input_chars=request.max_card_input_chars,
+        )
+
+    execution = await run_operation(
+        operation="wiki.cards.build",
+        telemetry=request.telemetry,
+        fn=_build,
+    )
+    return response_from_result(execution.result, telemetry=execution.telemetry)
 
 
 @router.post("/wiki/build")
@@ -48,8 +82,7 @@ async def build_wiki(
             resource_uris=request.resource_uris,
             ctx=_ctx,
             wiki_root_uri=request.wiki_root_uri,
-            card_input_mode=request.card_input_mode,
-            max_card_input_chars=request.max_card_input_chars,
+            node_discovery_backend=request.node_discovery_backend,
         )
 
     execution = await run_operation(
@@ -71,6 +104,7 @@ async def clear_wiki(
         return await service.wiki.clear_wiki(
             ctx=_ctx,
             wiki_root_uri=request.wiki_root_uri,
+            preserve_cards=request.preserve_cards,
         )
 
     execution = await run_operation(

@@ -8,7 +8,7 @@ from .schemas import (
     SourceAssignmentItem,
     SourceRef,
 )
-from .uri import card_md_uri_for_card
+from .uri import card_json_uri_for_card
 
 
 class SourceRefBuilder:
@@ -34,16 +34,27 @@ class SourceRefBuilder:
                 card = cards_by_id.get(source_id)
                 if not card:
                     raise RuntimeError(f"assignment references unknown doc_id: {source_id}")
+                facet_matches = item.facet_matches_by_source_id.get(source_id, [])
                 refs_by_node.setdefault(item.node_id, []).append(
                     SourceRef(
                         ref_id=card.doc_id,
                         ref_type=_ref_type_for_card(card),
                         doc_id=card.doc_id,
                         resource_uri=card.resource_uri,
-                        card_uri=card_md_uri_for_card(self.config, card),
+                        card_uri=card_json_uri_for_card(self.config, card),
                         title=card.title,
                         support_scope=item.support_scope,
-                        matched_topics=card.candidate_topics,
+                        matched_topics=(
+                            [match.facet_text for match in facet_matches]
+                            if facet_matches
+                            else card.candidate_topics
+                        ),
+                        matched_facet_ids=[match.facet_id for match in facet_matches],
+                        matched_source_refs=list(
+                            dict.fromkeys(
+                                ref for match in facet_matches for ref in match.source_refs
+                            )
+                        ),
                     )
                 )
         return refs_by_node

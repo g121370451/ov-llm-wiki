@@ -121,7 +121,7 @@ class ResourceDocumentDraft(StrictModel):
 
 - `relative_uri` 用来拼出文档资源 URI，例如 `root_uri + relative_uri`。
 - `doc_id` 贯穿 card、node discovery、source assignment 和 `sources/<doc_id>.ref.json`。
-- `title` 进入 Document Card prompt、card markdown 和来源展示。
+- `title` 进入 Document Card prompt、card JSON 和来源展示。
 
 例子：
 
@@ -153,25 +153,28 @@ viking://resources/qasper_30_processed_docs/nested/paper_b
 
 每篇输入分别生成一个 Document Card。
 
-### 节点发现与节点 card
+### 节点发现与 node card
 
-节点从上一层 source cards 中发现。第一层的 source cards 是原始文档 cards；更高层的 source cards 是下层节点生成后的 node cards。模型返回候选节点，以及每个节点由哪些 `source_id` 支撑。代码随后：
+默认后端是 `facet_graph`。原始文档先生成独立的 `DocumentFacetSet`，节点发现只读取 `facet_text` 的 embedding，不读取 Card 的 `summary` 或 `candidate_topics`。近邻图同时使用 top-k 和绝对分数阈值，排除同一文档内部的 facet 边，再用 Leiden/CPM 发现候选社区。LLM 只为成熟社区生成 `title` 和 `scope`，不再决定来源归属。
 
-- 规范化 `node_id`；
-- 基于已知 `DocumentCard` 构造 `SourceRef`；
-- 用 `min_refs_per_node` 过滤来源不足的节点；
-- 为保留下来的 active 节点写正文文档；
-- 正文生成完成后，再基于 `WikiNode.title/scope` 和正文文档生成 `nodes/<node_id>/card.md/json`。
+Card 仍有三个用途：保存文档摘要、为大节点正文生成大纲、为 `SourceRef` 提供标题和 URI。`llm_full_context` 后端保留为小语料质量基线，只有显式选择时才会让 LLM 根据 Card 发现节点。
 
-`assignments.py` 不调用 LLM。它只校验模型返回的来源 ID 是否存在，并用已知 card 构造 SourceRef。
+代码随后：
+
+- 按不同 `doc_id` 检查社区来源数；
+- 根据社区成员直接生成 source assignment；
+- 在 `SourceRef` 中保存实际命中的 facet 和证据 URI；
+- 为 active 节点生成正文与 node card；
+
+`assignments.py` 不调用 LLM。它只校验来源 ID，并用 Card 的身份信息和已匹配 facet 构造 `SourceRef`。
 
 ### 上层节点
 
-上层节点从已生成的下层 node cards 中发现，不再直接读取原始长文档。上层正文的输入是当前 node 的 title/scope，以及下层节点正文转换出的 source sections。
+每个 node document 都会按 Markdown 标题拆成 source sections，再生成自己的 `DocumentFacetSet`。下一层继续用这些 node facets 建图和聚类，和底层沿用同一语义契约。node card 不参与 `facet_graph` 的父层发现。
 
 上层正文 prompt 的重点是综合：输出应围绕当前层知识点组织，而不是按照 source 顺序逐个总结。
 
-是否继续向上由 `LayerDecisionRunner` 判断，同时受 `max_depth` 限制。上层节点还要满足 `min_child_nodes_per_parent`。同一个下层节点可以属于多个上层节点，因此 Wiki 结构是 DAG，不是严格树。
+`facet_graph` 会继续尝试下一层，直到没有满足 `min_child_nodes_per_parent` 的成熟社区、候选父节点数没有严格少于当前层节点数，或达到 `max_depth`。父层中 child 集合完全相同的 facet 社区先合并为一个候选父节点并汇总支持 facets；这样既允许同一个下层节点通过不同 facets 支持多个父节点，又不会把相同的一批 children 重复包装成多个父节点。无严格节点数压缩时会在调用 LLM 命名和写入父节点前停止。`LayerDecisionRunner` 只服务 `llm_full_context` 基线。
 
 ### Bot context tree
 
@@ -192,14 +195,22 @@ viking://wiki/my_wiki/
 ├── nodes.json
 ├── source_assignments.json
 ├── cards/
-│   ├── <doc_id>.card.md
 │   └── <doc_id>.card.json
+├── facets/
+│   ├── manifest.json
+│   ├── <doc_id>.facets.json
+│   └── nodes/
+│       ├── manifest.json
+│       └── <node_id>.facets.json
+├── clustering/
+│   └── runs/
+│       ├── depth_0001.json
+│       └── depth_0001.edges.jsonl
 ├── nodes/
 │   └── <node_id>/
-│       ├── card.md
 │       ├── card.json
 │       ├── documents/
-│       │   └── 0001.md
+│       │   └── document.md
 │       └── sources/
 │           └── <ref_id>.ref.json
 └── run/
@@ -214,15 +225,14 @@ viking://wiki/my_wiki/
 - `nodes.json`：所有发现节点，包括层级、父子关系和 rejected 节点。
 - `source_assignments.json`：节点级来源引用和未分配来源。
 - `cards/*.card.json`：原始文档的结构化 card。
-- `cards/*.card.md`：原始文档的人类可读 card。
-- `nodes/<node_id>/card.json`：节点的结构化 card，供上层发现和来源引用使用。
-- `nodes/<node_id>/card.md`：节点的人类可读 card，替代旧 `node.md`。
-- `nodes/<node_id>/documents/*.md`：综合生成的节点正文。
+- `facets/manifest.json` 和 `facets/*.facets.json`：原始文档的 facet cache。
+- `facets/nodes/`：各层 node document 的 facet cache 和输入指纹。
+- `clustering/runs/`：逐层图参数、社区成员和近邻边，供聚类质量审查。
+- `nodes/<node_id>/card.json`：节点摘要，供正文生成辅助和来源引用使用。
+- `nodes/<node_id>/documents/document.md`：综合生成的唯一节点正文。
 - `nodes/<node_id>/sources/*.ref.json`：该节点可用的来源列表。
 - `run/prompts.jsonl`：每次 LLM 调用的 prompt、schema name 和 schema hash。
 - `run/raw_outputs.jsonl`：模型返回并成功解析后的结构化输出。
-
-`document_id` 由代码按输出顺序补齐，例如 `0001`。它只保证同一次 run 内唯一，不承诺跨 run 稳定。
 
 ## LLM 行为
 
@@ -231,12 +241,17 @@ viking://wiki/my_wiki/
 当前会调用 LLM 的阶段：
 
 - `document_card`
-- `node_discovery`
+- `document_facets_batch_*`
+- `facet_community`
 - `node_documents`
+- `node_document_outline`
+- `node_documents_initial`
+- `node_documents_refine`
 - `node_card`
-- `next_layer_decision`
 
-文档生成阶段带结构化输出重试：如果模型返回的 JSON 外层可解析，但字段不符合 Pydantic 契约或生成了空 documents，会用同一个干净 prompt 最多重试 3 次。重试 prompt 不追加 Pydantic 错误细节，避免污染模型注意力。
+`node_discovery` 和 `next_layer_decision` 只在 `llm_full_context` 基线中调用。
+
+文档生成阶段带结构化输出重试：模型返回的 JSON 或 Markdown 不符合契约时，会用同一个干净 prompt 最多重试 3 次。重试 prompt 不追加校验错误，避免污染模型注意力。
 
 Prompt 边界是产品契约的一部分：
 
@@ -250,6 +265,7 @@ Prompt 边界是产品契约的一部分：
 服务入口是独立 Wiki 接口：
 
 ```text
+POST /api/v1/wiki/cards/build
 POST /api/v1/wiki/build
 POST /api/v1/wiki/clear
 ```
@@ -258,25 +274,34 @@ SDK 对应方法：
 
 ```python
 resource = client.add_resource(path="/path/to/docs", wait=True)
+cards = client.build_wiki_cards(resource_uris=[resource["root_uri"]])
 wiki = client.build_wiki(resource_uris=[resource["root_uri"]])
-client.clear_wiki()
+client.clear_wiki(preserve_cards=True)
 ```
 
-`WikiService.build_wiki(...)` 主要做五件事：
+`WikiService.build_wiki_cards(...)` 负责：
 
 1. 接收已入库的 `viking://resources/...` URI。
 2. 校验资源存在，并尝试读取每个 resource root 下的 `.wiki_documents.json`。
 3. 如果存在文档边界 manifest，就按文档记录展开成多个 `WikiResourceInput`；否则把 resource root 当作单篇输入。
-4. 创建 `WikiVikingFSWriter` 和 `WikiContentLoader`。
-5. 调用 `WikiPipeline.run_from_inputs(...)`。
+4. 按 `summary` 或 `raw_chunk` 输入生成 Document Cards。
+5. 写入 card 文件、运行记录和最后提交的严格校验 manifest。
+
+`WikiService.build_wiki(...)` 只加载并验证已有 cards，然后执行 node discovery、source
+assignment、node documents、node facets、node cards 和上层聚合。默认使用 `facet_graph`，
+可显式选择 `llm_full_context` 作为小规模基线。cards 缺失或指纹过期时会直接失败，
+不会隐式重新生成。
 
 `WikiService.clear_wiki(...)` 删除 `wiki_root_uri` 下的 Wiki 产物，默认是 `viking://wiki/`。底层 `VikingFS.rm(..., recursive=True)` 会联动清理这些 Wiki 文件对应的向量索引。清理接口固定幂等：目标不存在也返回成功。它不删除 `viking://resources/...` 下的原始入库文档、语义摘要、资源向量索引或 `.wiki_documents.json`。因此：
 
 ```text
-add_resource -> build_wiki -> clear_wiki
+add_resource -> build_wiki_cards -> build_wiki -> clear_wiki
 ```
 
 清理后资源库状态应与只执行 `add_resource` 后一致。
+
+节点调优时可调用 `clear_wiki(preserve_cards=True)`，此时只删除 nodes、source assignments
+和节点阶段运行记录，同时删除 node facets 与聚类运行记录，保留原始 Document Cards 和原文档 facets。
 
 `ResourceService.add_resource(...)` 不再接受 `build_wiki`、`wiki_card_input_mode` 或 `wiki_max_card_input_chars`。调用方必须先完成资源入库，再显式调用 Wiki 构建。
 
@@ -289,6 +314,8 @@ add_resource -> build_wiki -> clear_wiki
 
 如果 `summary` 模式读不到可用摘要，构建会提前失败。此时要么先完成语义生成，要么切到 `raw_chunk`。
 
+`max_card_input_chars` 只限制 Document Card 摘要 prompt 的输入长度，防止长文超过模型上下文。facet extraction 不使用这份截断输入，而是遍历完整 `source_sections` 后分批处理。
+
 ## 常用配置
 
 生成规模主要由 `WikiGenerationLimits` 控制：
@@ -299,7 +326,11 @@ add_resource -> build_wiki -> clear_wiki
 | `min_refs_per_node` | 底层节点最少需要多少个文档来源 | `3` |
 | `min_child_nodes_per_parent` | 父节点最少需要多少个子节点 | `3` |
 | `max_concurrent_cards` | Document Card 并发生成数 | `10` |
-| `max_concurrent_nodes` | 节点正文并发生成数 | `4` |
+| `max_concurrent_nodes` | 节点正文并发生成数 | `10` |
+| `max_facet_batch_chars` | 单批 facet extraction 的字符上限 | `30000` |
+| `facet_neighbor_limit` | 每个 facet 保留的跨文档近邻数 | `20` |
+| `facet_edge_score_threshold` | 相似图绝对分数阈值 | `0.72` |
+| `facet_cpm_resolution` | Leiden/CPM 聚类粒度 | `0.7` |
 
 有些配置字段仍是扩展预留。判断真实行为时，以 `pipeline.py` 中的过滤和编排逻辑为准。
 
@@ -307,9 +338,16 @@ add_resource -> build_wiki -> clear_wiki
 
 如果 Wiki 没启动：
 
-- 确认调用方在 `add_resource(wait=True)` 后调用了 `build_wiki(...)`。
+- 确认调用方在 `add_resource(wait=True)` 后先调用了 `build_wiki_cards(...)`，再调用
+  `build_wiki(...)`。
 - 看服务日志是否出现 Wiki pipeline 的 build 日志。
 - 看返回摘要里是否有 `wiki_root_uri`、card 数和 node 数。
+
+如果 `build_wiki` 报 Document Card cache missing or stale：
+
+1. 查看 `viking://wiki/cards/manifest.json` 是否存在。
+2. 检查源文档集合、card 输入模式、截断长度或 document-card prompt/schema 是否变化。
+3. 重新执行 `build_wiki_cards(...)`，不要在 `build_wiki` 中隐式生成 cards。
 
 如果没有生成节点正文：
 
@@ -346,7 +384,8 @@ uv run python benchmark/wiki/run.py --config benchmark/wiki/config/qasper_30.yam
 
 - 先用 `add_resource` 把资源写入 `viking://resources/...`。
 - parser 在入库阶段写 `.wiki_documents.json`，记录文档边界。
-- 再调用 `build_wiki(resource_uris=[root_uri])`，由 `WikiService` 读取 manifest 并展开文档。
+- 调用 `build_wiki_cards(resource_uris=[root_uri])` 生成可复用 cards。
+- 再调用 `build_wiki(resource_uris=[root_uri])` 构建 Wiki nodes。
 
 如果新增 parser，希望它支持目录资源的文档级 Wiki 构建，就需要在 `ParseResult.wiki_document_drafts` 中返回文档边界。每条 draft 当前需要：
 
@@ -356,7 +395,10 @@ uv run python benchmark/wiki/run.py --config benchmark/wiki/config/qasper_30.yam
 
 这些字段只用于定位和标识文档，不应夹带摘要、abstract、metadata、benchmark gold answer、评测标签或目标答案。
 
-如果绕过服务层、直接调用 `WikiPipeline.run_from_inputs(...)`，调用方需要自己提供 `WikiResourceInput`。每个 `WikiResourceInput` 必须包含：
+如果绕过服务层，调用方应依次调用
+`WikiPipeline.generate_document_cards_from_inputs(...)` 和
+`WikiPipeline.run_from_stored_cards(...)`，并自己提供 `WikiResourceInput`。每个
+`WikiResourceInput` 必须包含：
 
 - 稳定的 `doc_id`；
 - 真实的 `resource_uri`；
@@ -370,7 +412,10 @@ uv run python benchmark/wiki/run.py --config benchmark/wiki/config/qasper_30.yam
 
 当前限制：
 
-- 只支持全量重建，不支持读取旧 Wiki 后增量合并。
+- 首次建库已支持逐层 facet graph；nodes 仍只支持全量重建，不支持局部增量合并。
+- HNSW 只用于当前层近邻搜索；历史 facet ANN、embedding manifest 和增量索引尚未实现。缺少 HNSW 依赖时会明确记录 `exact` fallback。
+- Leiden/CPM 是 `facet_graph` 的固定社区算法；缺少 `python-igraph` 或 `leidenalg` 时构建会直接失败。
+- candidate micro-cluster、node registry、稳定 node identity 对齐和 assignment threshold 尚未实现。
 - 服务内构建目前固定写入 `viking://wiki/`。
 - claim 级 citation 暂时关闭。
 - 中途失败可能留下部分已写产物。

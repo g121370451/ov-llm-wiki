@@ -1,17 +1,17 @@
 project_name: "Wiki_Benchmark"
-dataset_name: "paperscope_summary_93_trend"
+dataset_name: "enterprise_rag_bench_selected_80_wiki_baseline"
 
 adapter:
-  module: "src.adapters.paperscope_summary_adapter"
-  class_name: "PaperScopeSummaryAdapter"
+  module: "src.adapters.enterprise_rag_bench_adapter"
+  class_name: "EnterpriseRAGBenchAdapter"
 
 execution:
   mode: "vikingbot"
   server_port: 2026
-  max_workers: 1
+  max_workers: 6
   retrieval_topk: 5
   max_queries: null
-  skip_ingestion: false
+  skip_ingestion: true
   ingest_mode: "directory"
   build_wiki: true
   wiki_card_input_mode: "summary"
@@ -19,9 +19,9 @@ execution:
   retrieval_instruction: ""
 
 paths:
-  dataset_path: "datasets/PaperScopeSummary93/summary_trend.jsonl"
-  doc_output_dir: "wiki_storage/paperscope_summary_93/paperscope_summary_93_processed_docs"
-  vector_store: "wiki_storage/paperscope_summary_93/paperscope_summary_93_viking_store_index"
+  dataset_path: "datasets/EnterpriseRAGBenchSelected80/questions_selected_80.jsonl"
+  doc_output_dir: "wiki_storage/enterprise_rag_bench_selected_80/enterprise_rag_bench_selected_80_processed_docs"
+  vector_store: "wiki_storage/enterprise_rag_bench_selected_80/enterprise_rag_bench_selected_80_viking_store_index"
   output_dir: "Output/{dataset_name}/wiki"
   log_file: "Output/{dataset_name}/wiki/benchmark.log"
 

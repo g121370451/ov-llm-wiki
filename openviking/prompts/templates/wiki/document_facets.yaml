@@ -1,0 +1,32 @@
+metadata:
+  id: "wiki.document_facets"
+  name: "Wiki Document Facets"
+  description: "Extract independently clusterable topic facets and explicit relations"
+  version: "1.0.0"
+  language: "en"
+  category: "wiki"
+
+variables:
+  - name: "input_json"
+    type: "string"
+    description: "JSON encoded bounded source sections"
+    required: true
+
+template: |
+  Extract reusable topic facets from this batch of one source document.
+
+  Rules:
+  - Each facet must describe one topic that could independently become a Wiki node.
+  - Create a facet only when the source provides a reusable explanation, method, fact, or conclusion. A passing term mention is insufficient.
+  - facet_text must be one or two self-contained sentences saying what this document explains about the topic.
+  - facet_id is only a batch-local identifier such as F001.
+  - source_refs must contain only short section_uri identifiers such as S0001 that are present in the input.
+  - Extract a facet relation only when the source explicitly states the relation. Do not infer a relation from co-occurrence.
+  - Relation endpoints must use facet_id values returned in this response.
+  - Return an empty list when this batch contains no reusable topic or explicit relation.
+
+  Input:
+  {{ input_json }}
+
+llm_config:
+  temperature: 0.0

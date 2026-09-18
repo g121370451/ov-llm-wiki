@@ -18,7 +18,7 @@ template: |
   Each output node must represent a reusable knowledge topic supported by multiple source cards.
 
   Rules:
-  - Use only source_id, title, summary, and candidate_topics from the input source_records.
+  - Use only source_id, summary, and candidate_topics from the input source_records.
   - Prefer a compact set of well-supported nodes over many narrow nodes.
   - Merge closely related candidate topics into one stronger node.
   - Create a separate node only when its scope is clearly distinct from existing nodes.
@@ -26,6 +26,7 @@ template: |
   - Do not create broad catch-all or generic overview nodes.
   - Each node should be supported by at least {{ min_sources_per_node }} distinct source cards.
   - A source card may support multiple Wiki nodes. Assign the same source_id to every node it substantively supports.
+  - Do not return multiple nodes with the exact same supporting_source_ids. If the same source set only supports one higher-level theme, return one node for that theme.
   - supporting_source_ids must contain only source_id values from the input.
   - merged_candidate_topics must contain candidate topic strings from the input that were merged into the node.
   - unassigned_source_ids only includes source cards that do not substantively support any returned node.

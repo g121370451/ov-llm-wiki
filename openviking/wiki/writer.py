@@ -29,15 +29,37 @@ class WikiVikingFSWriter:
         content_writer: Any | None = None,
     ):
         self.viking_fs = viking_fs
+        self.vikingdb = vikingdb
         self.ctx = ctx
         self.config = config
         self._writer = content_writer or ContentWriteCoordinator(viking_fs=viking_fs, vikingdb=vikingdb)
 
     async def ensure_dirs(self, node_ids: list[str] | None = None) -> None:
         """创建必要的目录"""
+        await self.ensure_card_dirs()
+        await self.ensure_wiki_dirs(node_ids)
+
+    async def ensure_card_dirs(self) -> None:
         dirs = [
             wiki_uri.wiki_root(self.config),
             wiki_uri.cards_dir(self.config),
+            wiki_uri.card_run_dir(self.config),
+        ]
+        for directory in dirs:
+            await self.viking_fs.mkdir(directory, exist_ok=True, ctx=self.ctx)
+
+    async def ensure_facet_dirs(self) -> None:
+        for directory in (
+            wiki_uri.wiki_root(self.config),
+            wiki_uri.facets_dir(self.config),
+            wiki_uri.node_facets_dir(self.config),
+            wiki_uri.facet_run_dir(self.config),
+        ):
+            await self.viking_fs.mkdir(directory, exist_ok=True, ctx=self.ctx)
+
+    async def ensure_wiki_dirs(self, node_ids: list[str] | None = None) -> None:
+        dirs = [
+            wiki_uri.wiki_root(self.config),
             wiki_uri.nodes_dir(self.config),
             wiki_uri.run_dir(self.config),
         ]
@@ -53,6 +75,14 @@ class WikiVikingFSWriter:
         for directory in dirs:
             await self.viking_fs.mkdir(directory, exist_ok=True, ctx=self.ctx)
 
+    async def ensure_clustering_dirs(self) -> None:
+        for directory in (
+            wiki_uri.wiki_root(self.config),
+            wiki_uri.clustering_dir(self.config),
+            wiki_uri.clustering_runs_dir(self.config),
+        ):
+            await self.viking_fs.mkdir(directory, exist_ok=True, ctx=self.ctx)
+
     async def write_text(self, uri: str, content: str) -> None:
         try:
             await self._writer.write(uri=uri, content=content, mode="create", wait=True, ctx=self.ctx)
@@ -64,6 +94,20 @@ class WikiVikingFSWriter:
     async def write_json(self, uri: str, payload: Any) -> None:
         content = json.dumps(_to_jsonable(payload), ensure_ascii=False, indent=2)
         await self.write_text(uri, content)
+
+    async def write_metadata_json(self, uri: str, payload: Any) -> None:
+        """Persist internal metadata without adding it to semantic retrieval."""
+        content = json.dumps(_to_jsonable(payload), ensure_ascii=False, indent=2)
+        await self.viking_fs.write(uri, content, ctx=self.ctx)
+
+    async def write_metadata_jsonl(self, uri: str, rows: list[Any]) -> None:
+        """Persist internal JSONL metadata without semantic indexing."""
+        content = "\n".join(
+            json.dumps(_to_jsonable(row), ensure_ascii=False) for row in rows
+        )
+        if content:
+            content += "\n"
+        await self.viking_fs.write(uri, content, ctx=self.ctx)
 
     async def write_jsonl(self, uri: str, rows: list[Any]) -> None:
         content = "\n".join(json.dumps(_to_jsonable(row), ensure_ascii=False) for row in rows)
